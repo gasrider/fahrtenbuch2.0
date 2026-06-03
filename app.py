@@ -34,8 +34,13 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def add_user(username, password):
     clean_username = username.strip().lower()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    response = supabase.table("users").insert({"username": clean_username, "password": hashed_pw}).execute()
-    return len(response.data) > 0
+    try:
+        response = supabase.table("users").insert({"username": clean_username, "password": hashed_pw}).execute()
+        return len(response.data) > 0
+    except Exception as e:
+        # Zwingt die App, den ECHTEN Datenbankfehler zu zeigen
+        fehler_details = getattr(e, 'message', str(e))
+        raise Exception(f"Supabase sagt NEIN: {fehler_details}")
 
 def verify_user(username, password):
     clean_username = username.strip().lower()
