@@ -22,14 +22,14 @@ except Exception as e:
     REPORTLAB_OK = False
 
 # ==========================================
-# 1. SUPABASE VERBINDUNG (Liest Keys automatisch aus dem Server)
+# 1. SUPABASE VERBINDUNG
 # ==========================================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. DATENBANK FUNKTIONEN
+# 2. DATENBANK FUNKTIONEN (MIT FEHLER-ÜBERSETZER)
 # ==========================================
 def add_user(username, password):
     clean_username = username.strip().lower()
@@ -49,17 +49,23 @@ def verify_user(username, password):
     return len(response.data) > 0
 
 def save_settings(username, data_dict):
-    supabase.table("settings").upsert({"username": username, "name": data_dict.get('name',''), "pnr": data_dict.get('pnr',''), "wohnort": data_dict.get('wohnort',''), "dienstort": data_dict.get('dienstort',''), "entfernung": data_dict.get('entfernung',0)}).execute()
+    try:
+        supabase.table("settings").upsert({"username": username, "name": data_dict.get('name',''), "pnr": data_dict.get('pnr',''), "wohnort": data_dict.get('wohnort',''), "dienstort": data_dict.get('dienstort',''), "entfernung": data_dict.get('entfernung',0)}).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Stammdaten: {getattr(e, 'message', str(e))}")
 
 def load_settings(username):
     response = supabase.table("settings").select("*").eq("username", username).execute()
     return response.data[0] if response.data else {}
 
 def save_fahrzeuge(username, df):
-    supabase.table("fahrzeuge").delete().eq("username", username).execute()
-    df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
-    for row in df_insert: row["username"] = username
-    if df_insert: supabase.table("fahrzeuge").insert(df_insert).execute()
+    try:
+        supabase.table("fahrzeuge").delete().eq("username", username).execute()
+        df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
+        for row in df_insert: row["username"] = username
+        if df_insert: supabase.table("fahrzeuge").insert(df_insert).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Fahrzeuge: {getattr(e, 'message', str(e))}")
 
 def load_fahrzeuge(username):
     response = supabase.table("fahrzeuge").select("*").eq("username", username).order("id").execute()
@@ -68,10 +74,13 @@ def load_fahrzeuge(username):
 
 def save_fahrten(username, jahr, monat, df):
     if df.empty: return
-    supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
-    df_insert = df.to_dict('records')
-    for row in df_insert: row["username"] = username; row["jahr"] = jahr; row["monat"] = monat
-    if df_insert: supabase.table("fahrten").insert(df_insert).execute()
+    try:
+        supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
+        df_insert = df.to_dict('records')
+        for row in df_insert: row["username"] = username; row["jahr"] = jahr; row["monat"] = monat
+        if df_insert: supabase.table("fahrten").insert(df_insert).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Fahrten: {getattr(e, 'message', str(e))}")
 
 def load_fahrten(username, jahr, monat):
     response = supabase.table("fahrten").select("datum, fahrzeug_id, fahrzeug, route, km_d, km_p, abf, ank, dauer, abfahrt_km").eq("username", username).eq("jahr", jahr).eq("monat", monat).order("datum").execute()
@@ -83,11 +92,9 @@ def berechne_taggeld(dauer_minuten):
     return "26,40"
 
 # ==========================================
-# 3. PDF GENERATOR (Gekürzt fürs Beispiel, dein voller Code kommt hier hin)
+# 3. PDF GENERATOR (Platzhalter)
 # ==========================================
 def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
-    # HIER KOMMT SPÄTER DEIN GANZER REPORTLAB CODE AUS MEINER ERSTEN ANTWORT HIN
-    # Für den ersten Test erstellen wir nur ein minimales PDF:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4)
     story = [Paragraph(f"Test PDF für {user_info.get('name')} - {calendar.month_name[monat]}", getSampleStyleSheet()['Heading1'])]
@@ -96,7 +103,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     return buf
 
 # ==========================================
-# 4. STREAMLIT APP
+# 4. STREAMLIT APP & LOGIN
 # ==========================================
 st.set_page_config(page_title="Fahrtenbuch", layout="wide")
 
@@ -107,19 +114,38 @@ if 'logged_in' not in st.session_state:
 if not st.session_state['logged_in']:
     st.title("🚗 Login")
     tab1, tab2 = st.tabs(["Anmelden", "Registrieren"])
+    
     with tab1:
-        u = st.text_input("User"); p = st.text_input("Passwort", type="password")
-        if st.button("Login") and verify_user(u, p):
-            st.session_state['logged_in'] = True; st.session_state['username'] = u.strip().lower(); st.rerun()
+        u = st.text_input("User")
+        p = st.text_input("Passwort", type="password")
+        if st.button("Login"):
+            if verify_user(u, p):
+                st.session_state['logged_in'] = True
+                st.session_state['username'] = u.strip().lower()
+                st.rerun()
+            else:
+                st.error("Falsche Zugangsdaten")
+                
     with tab2:
-        nu = st.text_input("Neuer User"); np_ = st.text_input("Neues Passwort", type="password")
-        if st.button("Registrieren") and add_user(nu, np_): st.success("Erstellt!")
+        nu = st.text_input("Neuer User")
+        np_ = st.text_input("Neues Passwort", type="password")
+        if st.button("Registrieren"):
+            try:
+                if add_user(nu, np_):
+                    st.success("User erstellt! Du kannst dich jetzt einloggen.")
+            except Exception as e:
+                st.error(str(e))
+                
     st.stop()
 
+# --- AB HIER EINGELOGGT ---
 user = st.session_state['username']
+
 with st.sidebar:
     st.success(f"Eingeloggt: **{user}**")
-    if st.button("Logout"): st.session_state['logged_in'] = False; st.rerun()
+    if st.button("Logout"): 
+        st.session_state['logged_in'] = False
+        st.rerun()
 
 user_info = load_settings(user)
 fahrzeuge_df = load_fahrzeuge(user)
