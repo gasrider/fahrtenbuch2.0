@@ -72,36 +72,41 @@ def load_zeitraeume(username):
     return pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 def save_fahrten_to_db(username, generated_data):
-    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Typ-Korrektur)."""
+    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Fehlerspiegel)."""
     for (jahr, monat), month_data in generated_data.items():
         df = month_data["data"]
         if not df.empty:
             supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
             df_insert = df.to_dict('records')
             
-            # WICHTIG: Numpy-Datentypen in Standard-Python übersetzen!
             clean_insert = []
             for row in df_insert:
+                # Extrem strenge Bereinigung: Jeder Wert wird gezwungen, ein reines Python-Format zu sein
                 clean_row = {
-                    "username": username, 
+                    "username": str(username), 
                     "jahr": int(jahr), 
                     "monat": int(monat),
                     "datum": str(row["datum"]), 
-                    "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
-                    "fahrzeug": str(row["fahrzeug"]),
-                    "route": str(row["route"]),
-                    "km_d": int(row["km_d"]),
-                    "km_p": int(row["km_p"]),
-                    "abf": str(row["abf"]),
-                    "ank": str(row["ank"]),
-                    "dauer": str(row["dauer"]),
-                    "abfahrt_km": int(row["abfahrt_km"])
+                    "fahrzeug_id": int(row["fahrzeug_id"]) if row.get("fahrzeug_id") is not None and str(row.get("fahrzeug_id")) != "nan" else None,
+                    "fahrzeug": str(row.get("fahrzeug", "")),
+                    "route": str(row.get("route", "")),
+                    "km_d": int(row["km_d"]) if str(row.get("km_d")) != "nan" else 0,
+                    "km_p": int(row["km_p"]) if str(row.get("km_p")) != "nan" else 0,
+                    "abf": str(row.get("abf", "00:00")),
+                    "ank": str(row.get("ank", "00:00")),
+                    "dauer": str(row.get("dauer", "00:00")),
+                    "abfahrt_km": int(row["abfahrt_km"]) if str(row.get("abfahrt_km")) != "nan" else 0
                 }
                 clean_insert.append(clean_row)
             
-            # In 500er Blöcken hochladen, da Supabase Limits hat
-            for i in range(0, len(clean_insert), 500):
-                supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
+            # Versuche hochzuladen, aber fange den Fehler ab um ihn LESBAR zu machen
+            try:
+                for i in range(0, len(clean_insert), 500):
+                    supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
+            except Exception as e:
+                # ZWINGT DIE APP, DEN ECHTEN DATENBANK-FEHLER ZU ZEIGEN
+                fehler_details = getattr(e, 'message', str(e))
+                raise Exception(f"⚠️ Supabase Fehler beim Speichern des Monats {monat}: {fehler_details}")
 
 # ==========================================
 # 2. HELPERS (Aus deinem alten Code)
