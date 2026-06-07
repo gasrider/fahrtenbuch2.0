@@ -92,16 +92,100 @@ def berechne_taggeld(dauer_minuten):
     return "26,40"
 
 # ==========================================
-# 3. PDF GENERATOR (Platzhalter)
+# 3. ECHTER PDF GENERATOR
 # ==========================================
 def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
+    """Erstellt ein PDF, das exakt das Layout der Vorlage nachbildet."""
+    monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+    monat_name = monate[monat - 1]
+    
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4)
-    story = [Paragraph(f"Test PDF für {user_info.get('name')} - {calendar.month_name[monat]}", getSampleStyleSheet()['Heading1'])]
-    doc.build(story)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=25*mm)
+    story = []
+    styles = getSampleStyleSheet()
+
+    def footer(canvas, doc):
+        canvas.saveState()
+        page_num = canvas.getPageNumber()
+        footer_text = f"Erstellt von:{user_info.get('username', '')} Seite{page_num}von2 gedruckt:{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+        canvas.setFont("Helvetica", 9)
+        canvas.drawRightString(A4[0] - 12*mm, 10*mm, footer_text)
+        canvas.restoreState()
+
+    titel_para = Paragraph("Fahrtenbuch Monatsübersicht", styles['Heading2'])
+    datum_para = Paragraph(f"{monat_name} {jahr}", styles['Heading2'])
+    title_table = Table([[titel_para, datum_para]], colWidths=[doc.width/2, doc.width/2])
+    title_table.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('ALIGN', (1, 0), (1, 0), 'RIGHT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, 0), 16)]))
+    story.append(title_table)
+    story.append(Spacer(1, 8*mm))
+
+    fzg_list = [f"{i+1}-{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for i, r in fahrzeuge_df.iterrows()]
+    fzg_string = "  |  ".join(fzg_list)
+    
+    stamm_data = [
+        [Paragraph(f"Name: {user_info.get('name','')}", styles['Normal'])],
+        [Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])],
+        [Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])],
+        [Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])],
+        [Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", styles['Normal'])],
+        [Paragraph("Fahrzeug(e): " + fzg_string, styles['Normal'])],
+    ]
+    stamm_table = Table(stamm_data, colWidths=[doc.width])
+    stamm_table.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'), ('FONTSIZE', (0, 0), (-1, -1), 9), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+    story.append(stamm_table)
+    story.append(Spacer(1, 6*mm))
+
+    story.append(Table([['']], colWidths=[doc.width]))
+    story[-1].setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, 0), 1, colors.black)]))
+    story.append(Spacer(1, 4*mm))
+
+    wrap_style = ParagraphStyle('wrap', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=9.6)
+    headers = ["Tag", "Abf.", "Ank.", "Dauer", "Reiseweg - Ziel - Zweck", "Abfahrt", "gefahrene km", "amtlich.", "Taggeld", "KFZ"]
+    sub_headers = ["", "", "", "", "", "", "dienstl.", "privat", "", ""]
+    data = [headers, sub_headers]
+    
+    for _, r in df.iterrows():
+        dt = pd.to_datetime(r["datum"])
+        german_day_abbr = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+        tag_name = german_day_abbr[dt.weekday()]
+        tag = f"{tag_name[:2]}.{dt.day:02d}."
+        route_para = Paragraph(str(r["route"]), wrap_style)
+        try:
+            dauer_parts = r["dauer"].split(':')
+            dauer_min = int(dauer_parts[0]) * 60 + int(dauer_parts[1])
+        except: dauer_min = 0
+            
+        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r["abfahrt_km"]), int(r["km_d"]), int(r["km_p"]), berechne_taggeld(dauer_min), r["fahrzeug"]])
+    
+    sum_dienstl = int(df["km_d"].sum())
+    sum_privat = int(df["km_p"].sum())
+    sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
+
+    data.append(["Einzelsummen:", "", "", "", "", "", sum_dienstl, sum_privat, f"{sum_taggeld:.2f}".replace('.', ','), ""])
+    
+    col_widths = [12*mm, 10*mm, 10*mm, 12*mm, 71*mm, 15*mm, 15*mm, 15*mm, 12*mm, 18*mm]
+    table = Table(data, colWidths=col_widths, repeatRows=2)
+    
+    style = TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 1), 9), ("FONTSIZE", (0, 2), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("ALIGN", (4, 2), (4, -1), "LEFT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 1), colors.whitesmoke), ("SPAN", (6, 0), (7, 0)),
+        ("SPAN", (0, -1), (4, -1)), ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),
+    ])
+    table.setStyle(style)
+    story.append(table)
+    story.append(Spacer(1, 5*mm))
+    
+    notes = ["Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.", "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km", "km-Geld Satz PKW amtlich ab 01.01.2023 EUR 0,42", "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"]
+    for note in notes:
+        story.append(Paragraph(note, styles['Normal']))
+        story.append(Spacer(1, 3*mm))
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
     buf.seek(0)
     return buf
-
 # ==========================================
 # 4. STREAMLIT APP & LOGIN
 # ==========================================
