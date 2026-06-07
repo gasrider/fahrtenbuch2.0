@@ -72,14 +72,36 @@ def load_zeitraeume(username):
     return pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 def save_fahrten_to_db(username, generated_data):
-    """Speichert generierte Fahrten aus dem RAM in Supabase."""
+    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Typ-Korrektur)."""
     for (jahr, monat), month_data in generated_data.items():
         df = month_data["data"]
         if not df.empty:
             supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
             df_insert = df.to_dict('records')
-            for row in df_insert: row["username"] = username; row["jahr"] = jahr; row["monat"] = monat
-            if df_insert: supabase.table("fahrten").insert(df_insert).execute()
+            
+            # WICHTIG: Numpy-Datentypen in Standard-Python übersetzen!
+            clean_insert = []
+            for row in df_insert:
+                clean_row = {
+                    "username": username, 
+                    "jahr": int(jahr), 
+                    "monat": int(monat),
+                    "datum": str(row["datum"]), 
+                    "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
+                    "fahrzeug": str(row["fahrzeug"]),
+                    "route": str(row["route"]),
+                    "km_d": int(row["km_d"]),
+                    "km_p": int(row["km_p"]),
+                    "abf": str(row["abf"]),
+                    "ank": str(row["ank"]),
+                    "dauer": str(row["dauer"]),
+                    "abfahrt_km": int(row["abfahrt_km"])
+                }
+                clean_insert.append(clean_row)
+            
+            # In 500er Blöcken hochladen, da Supabase Limits hat
+            for i in range(0, len(clean_insert), 500):
+                supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
 
 # ==========================================
 # 2. HELPERS (Aus deinem alten Code)
