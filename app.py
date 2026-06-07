@@ -51,8 +51,18 @@ def load_settings(username):
 def save_fahrzeuge(username, df):
     supabase.table("fahrzeuge").delete().eq("username", username).execute()
     df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
-    for row in df_insert: row["username"] = username
-    if df_insert: supabase.table("fahrzeuge").insert(df_insert).execute()
+    clean_insert = []
+    for row in df_insert:
+        clean_row = {
+            "username": username,
+            "bezeichnung": str(row.get("bezeichnung", "")),
+            "kennzeichen": str(row.get("kennzeichen", "")),
+            "start_km_vorjahr": int(row["start_km_vorjahr"]) if pd.notna(row.get("start_km_vorjahr")) else 0,
+            "privat_km_min": int(row["privat_km_min"]) if pd.notna(row.get("privat_km_min")) else 0,
+            "privat_km_max": int(row["privat_km_max"]) if pd.notna(row.get("privat_km_max")) else 0
+        }
+        clean_insert.append(clean_row)
+    if clean_insert: supabase.table("fahrzeuge").insert(clean_insert).execute()
 
 def load_fahrzeuge(username):
     response = supabase.table("fahrzeuge").select("*").eq("username", username).order("id").execute()
@@ -62,9 +72,18 @@ def load_fahrzeuge(username):
 def save_zeitraeume(username, df):
     supabase.table("zeitraeume").delete().eq("username", username).execute()
     df_save = df[["fahrzeug_id", "von", "bis"]].copy()
-    df_save["username"] = username
     df_insert = df_save.to_dict('records')
-    if df_insert: supabase.table("zeitraeume").insert(df_insert).execute()
+    clean_insert = []
+    for row in df_insert:
+        clean_row = {
+            "username": username,
+            "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
+            # Datumsformat sicherstellen (YYYY-MM-DD)
+            "von": str(row["von"])[:10], 
+            "bis": str(row["bis"])[:10]
+        }
+        clean_insert.append(clean_row)
+    if clean_insert: supabase.table("zeitraeume").insert(clean_insert).execute()
 
 def load_zeitraeume(username):
     response = supabase.table("zeitraeume").select("fahrzeug_id, von, bis").eq("username", username).execute()
