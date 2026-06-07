@@ -349,7 +349,6 @@ with st.sidebar:
     user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', 'Hans Schmidinger-Straße 14, A-5303 Thalgau'))
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
-```python
     user_info['km_geld'] = st.number_input("km-Geld Satz PKW amtlich (EUR)", min_value=0.0, max_value=2.0, value=float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
     if st.button("💾 Stammdaten speichern"): save_settings(user, user_info); st.toast("Gespeichert!")
 
