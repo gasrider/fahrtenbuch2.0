@@ -238,7 +238,13 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     ])
     table.setStyle(style); story.append(table); story.append(Spacer(1, 5*mm))
     
-    notes = ["Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.", "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km", "km-Geld Satz PKW amtlich ab 01.01.2023 EUR 0,42", "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"]
+    satz = float(user_info.get('km_geld', 0.42))
+    notes = [
+        "Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.",
+        "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km",
+        f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {satz:.2f}",
+        "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"
+    ]
     for note in notes: story.append(Paragraph(note, styles['Normal'])); story.append(Spacer(1, 3*mm))
     doc.build(story, onFirstPage=footer, onLaterPages=footer); buf.seek(0); return buf
 
@@ -259,7 +265,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 
     headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
     sub_headers = ["", "dienstl.", "privat", "PKW", "EUR", "EUR"]
-    data = [headers, sub_headers]; km_geld_satz = 0.42; total_dienstl = 0; total_privat = 0; total_km_geld = 0; total_taggeld = 0
+    data = [headers, sub_headers]; km_geld_satz = float(user_info.get('km_geld', 0.42)); total_dienstl = 0; total_privat = 0; total_km_geld = 0; total_taggeld = 0
     for i, monat_name in enumerate(monate):
         monat_key = (jahr, i + 1)
         if monat_key in generated_data:
@@ -343,6 +349,8 @@ with st.sidebar:
     user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', 'Hans Schmidinger-Straße 14, A-5303 Thalgau'))
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
+```python
+    user_info['km_geld'] = st.number_input("km-Geld Satz PKW amtlich (EUR)", min_value=0.0, max_value=2.0, value=float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
     if st.button("💾 Stammdaten speichern"): save_settings(user, user_info); st.toast("Gespeichert!")
 
 st.markdown("---")
