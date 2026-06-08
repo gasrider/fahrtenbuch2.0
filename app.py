@@ -51,18 +51,8 @@ def load_settings(username):
 def save_fahrzeuge(username, df):
     supabase.table("fahrzeuge").delete().eq("username", username).execute()
     df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
-    clean_insert = []
-    for row in df_insert:
-        clean_row = {
-            "username": username,
-            "bezeichnung": str(row.get("bezeichnung", "")),
-            "kennzeichen": str(row.get("kennzeichen", "")),
-            "start_km_vorjahr": int(row["start_km_vorjahr"]) if pd.notna(row.get("start_km_vorjahr")) else 0,
-            "privat_km_min": int(row["privat_km_min"]) if pd.notna(row.get("privat_km_min")) else 0,
-            "privat_km_max": int(row["privat_km_max"]) if pd.notna(row.get("privat_km_max")) else 0
-        }
-        clean_insert.append(clean_row)
-    if clean_insert: supabase.table("fahrzeuge").insert(clean_insert).execute()
+    for row in df_insert: row["username"] = username
+    if df_insert: supabase.table("fahrzeuge").insert(df_insert).execute()
 
 def load_fahrzeuge(username):
     response = supabase.table("fahrzeuge").select("*").eq("username", username).order("id").execute()
@@ -72,18 +62,9 @@ def load_fahrzeuge(username):
 def save_zeitraeume(username, df):
     supabase.table("zeitraeume").delete().eq("username", username).execute()
     df_save = df[["fahrzeug_id", "von", "bis"]].copy()
+    df_save["username"] = username
     df_insert = df_save.to_dict('records')
-    clean_insert = []
-    for row in df_insert:
-        clean_row = {
-            "username": username,
-            "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
-            # Datumsformat sicherstellen (YYYY-MM-DD)
-            "von": str(row["von"])[:10], 
-            "bis": str(row["bis"])[:10]
-        }
-        clean_insert.append(clean_row)
-    if clean_insert: supabase.table("zeitraeume").insert(clean_insert).execute()
+    if df_insert: supabase.table("zeitraeume").insert(df_insert).execute()
 
 def load_zeitraeume(username):
     response = supabase.table("zeitraeume").select("fahrzeug_id, von, bis").eq("username", username).execute()
@@ -91,41 +72,36 @@ def load_zeitraeume(username):
     return pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 def save_fahrten_to_db(username, generated_data):
-    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Fehlerspiegel)."""
+    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Typ-Korrektur)."""
     for (jahr, monat), month_data in generated_data.items():
         df = month_data["data"]
         if not df.empty:
             supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
             df_insert = df.to_dict('records')
             
+            # WICHTIG: Numpy-Datentypen in Standard-Python übersetzen!
             clean_insert = []
             for row in df_insert:
-                # Extrem strenge Bereinigung: Jeder Wert wird gezwungen, ein reines Python-Format zu sein
                 clean_row = {
-                    "username": str(username), 
+                    "username": username, 
                     "jahr": int(jahr), 
                     "monat": int(monat),
                     "datum": str(row["datum"]), 
-                    "fahrzeug_id": int(row["fahrzeug_id"]) if row.get("fahrzeug_id") is not None and str(row.get("fahrzeug_id")) != "nan" else None,
-                    "fahrzeug": str(row.get("fahrzeug", "")),
-                    "route": str(row.get("route", "")),
-                    "km_d": int(row["km_d"]) if str(row.get("km_d")) != "nan" else 0,
-                    "km_p": int(row["km_p"]) if str(row.get("km_p")) != "nan" else 0,
-                    "abf": str(row.get("abf", "00:00")),
-                    "ank": str(row.get("ank", "00:00")),
-                    "dauer": str(row.get("dauer", "00:00")),
-                    "abfahrt_km": int(row["abfahrt_km"]) if str(row.get("abfahrt_km")) != "nan" else 0
+                    "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
+                    "fahrzeug": str(row["fahrzeug"]),
+                    "route": str(row["route"]),
+                    "km_d": int(row["km_d"]),
+                    "km_p": int(row["km_p"]),
+                    "abf": str(row["abf"]),
+                    "ank": str(row["ank"]),
+                    "dauer": str(row["dauer"]),
+                    "abfahrt_km": int(row["abfahrt_km"])
                 }
                 clean_insert.append(clean_row)
             
-            # Versuche hochzuladen, aber fange den Fehler ab um ihn LESBAR zu machen
-            try:
-                for i in range(0, len(clean_insert), 500):
-                    supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
-            except Exception as e:
-                # ZWINGT DIE APP, DEN ECHTEN DATENBANK-FEHLER ZU ZEIGEN
-                fehler_details = getattr(e, 'message', str(e))
-                raise Exception(f"⚠️ Supabase Fehler beim Speichern des Monats {monat}: {fehler_details}")
+            # In 500er Blöcken hochladen, da Supabase Limits hat
+            for i in range(0, len(clean_insert), 500):
+                supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
 
 # ==========================================
 # 2. HELPERS (Aus deinem alten Code)
@@ -238,13 +214,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     ])
     table.setStyle(style); story.append(table); story.append(Spacer(1, 5*mm))
     
-    satz = float(user_info.get('km_geld', 0.42))
-    notes = [
-        "Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.",
-        "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km",
-        f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {satz:.2f}",
-        "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"
-    ]
+    notes = ["Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.", "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km", "km-Geld Satz PKW amtlich ab 01.01.2023 EUR 0,42", "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"]
     for note in notes: story.append(Paragraph(note, styles['Normal'])); story.append(Spacer(1, 3*mm))
     doc.build(story, onFirstPage=footer, onLaterPages=footer); buf.seek(0); return buf
 
@@ -265,7 +235,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 
     headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
     sub_headers = ["", "dienstl.", "privat", "PKW", "EUR", "EUR"]
-    data = [headers, sub_headers]; km_geld_satz = float(user_info.get('km_geld', 0.42)); total_dienstl = 0; total_privat = 0; total_km_geld = 0; total_taggeld = 0
+    data = [headers, sub_headers]; km_geld_satz = 0.42; total_dienstl = 0; total_privat = 0; total_km_geld = 0; total_taggeld = 0
     for i, monat_name in enumerate(monate):
         monat_key = (jahr, i + 1)
         if monat_key in generated_data:
@@ -343,13 +313,12 @@ st.title("Fahrtenbuch Generator v6.0 - Multi-User Edition")
 # ========= Stammdaten =========
 with st.sidebar:
     st.header("📋 Stammdaten")
-    user_info['name'] = st.text_input("Name", user_info.get('name', 'Christian Mayerhofer'))
-    user_info['pnr'] = st.text_input("PNR", user_info.get('pnr', '642476'))
-    user_info['wohnort'] = st.text_input("Wohnort", user_info.get('wohnort', 'Rabenschwand 17 b, A-4894 Oberhofen am Irrsee'))
-    user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', 'Hans Schmidinger-Straße 14, A-5303 Thalgau'))
+    user_info['name'] = st.text_input("Name", user_info.get('name', ''))
+    user_info['pnr'] = st.text_input("PNR", user_info.get('pnr', ''))
+    user_info['wohnort'] = st.text_input("Wohnort", user_info.get('wohnort', ''))
+    user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', ''))
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
-    user_info['km_geld'] = st.number_input("km-Geld Satz PKW amtlich (EUR)", min_value=0.0, max_value=2.0, value=float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
     if st.button("💾 Stammdaten speichern"): save_settings(user, user_info); st.toast("Gespeichert!")
 
 st.markdown("---")
@@ -450,8 +419,8 @@ if kw_xlsx is not None:
     if "zweck" in df.columns: df.rename(columns={"zweck": "Zweck"}, inplace=True)
     keywords = df; st.info("✅ Keywords werden aus der hochgeladenen Excel-Datei verwendet.")
 
-if fahrzeuge_df.empty: fahrzeuge_df = pd.DataFrame([{"id": 1, "bezeichnung": "VW T6.1", "kennzeichen": "VB-900AN", "start_km_vorjahr": 55283, "privat_km_min": 10, "privat_km_max": 40}, {"id": 2, "bezeichnung": "AUDI Etron", "kennzeichen": "VB-VAG4", "start_km_vorjahr": 20020, "privat_km_min": 5, "privat_km_max": 25}, {"id": 3, "bezeichnung": "VW Polo", "kennzeichen": "VB-VAG4", "start_km_vorjahr": 19946, "privat_km_min": 5, "privat_km_max": 20}])
-if zeitraeume_df.empty: zeitraeume_df = pd.DataFrame([{"fahrzeug_id": 1, "von": date(jahr, 1, 1), "bis": date(jahr, 12, 31)}, {"fahrzeug_id": 2, "von": date(jahr, 1, 1), "bis": date(jahr, 12, 31)}, {"fahrzeug_id": 3, "von": date(jahr, 1, 1), "bis": date(jahr, 12, 31)}])
+if fahrzeuge_df.empty: fahrzeuge_df = pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max"])
+if zeitraeume_df.empty: zeitraeume_df = pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 # ========= Editors =========
 st.subheader("📝 Fahrzeuge & Zeiträume (editierbar)")
