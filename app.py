@@ -507,8 +507,13 @@ if gen_btn:
                     num_stops = rng.integers(1, 3); selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]
                     km_d = rng.integers(15, 25) + sum(rng.integers(10, 25) for _ in range(num_stops)); km_p = 0
                     prefix = "Feiertag: " if is_holiday else "Urlaub: "; route = prefix + " - ".join(full_route)
-                    fahrzeit_min = int(km_d / 80 * 60); pause_min = int(rng.integers(20, 40)); dauer_min = fahrzeit_min + pause_min
-                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=9); ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                                        fahrzeit_min = int(km_d / 80 * 60)
+                    pause_min = int(rng.integers(20, 60))
+                    dauer_min = fahrzeit_min + pause_min
+                    # 🎲 ANTI-MUSTER: Normalverteilung für Arbeitsbeginn (meist 07:45 - 08:15 Uhr)
+                    start_minute = int(np.clip(rng.normal(480, 20), 420, 540)) 
+                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
                 else:
                     if is_vacation:
@@ -546,8 +551,14 @@ if gen_btn:
                     num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
                     for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
                     route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
-                    total_km = km_p + km_d; fahrzeit_min = int(total_km / 80 * 60); pause_min = int(rng.integers(30, 90)); dauer_min = fahrzeit_min + pause_min
-                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=7, minutes=30); ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                    total_km = km_p + km_d
+                    fahrzeit_min = int(total_km / 80 * 60)
+                    pause_min = int(rng.integers(30, 90))
+                    dauer_min = fahrzeit_min + pause_min
+                    # 🎲 ANTI-MUSTER: Früher Start für die große Tour (meist 07:15 - 07:45 Uhr)
+                    start_minute = int(np.clip(rng.normal(445, 20), 390, 510)) 
+                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
                 elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
                     prob = wahrscheinlichkeit_dienstfahrt_werktag
