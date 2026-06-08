@@ -102,6 +102,28 @@ def save_fahrten_to_db(username, generated_data):
             # In 500er Blöcken hochladen, da Supabase Limits hat
             for i in range(0, len(clean_insert), 500):
                 supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
+				
+def update_month_in_db(username, jahr, monat, df):
+    """Überschreibt einen spezifischen Monat in der DB (für manuelle Korrekturen)."""
+    supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
+    clean_insert = []
+    for row in df.to_dict('records'):
+        clean_row = {
+            "username": username, "jahr": int(jahr), "monat": int(monat),
+            "datum": str(row["datum"]), 
+            "fahrzeug_id": int(row["fahrzeug_id"]) if row.get("fahrzeug_id") is not None and str(row.get("fahrzeug_id")) != "nan" else None,
+            "fahrzeug": str(row.get("fahrzeug", "")),
+            "route": str(row.get("route", "")),
+            "km_d": int(row["km_d"]) if str(row.get("km_d")) != "nan" else 0,
+            "km_p": int(row["km_p"]) if str(row.get("km_p")) != "nan" else 0,
+            "abf": str(row.get("abf", "00:00")),
+            "ank": str(row.get("ank", "00:00")),
+            "dauer": str(row.get("dauer", "00:00")),
+            "abfahrt_km": int(row["abfahrt_km"]) if str(row.get("abfahrt_km")) != "nan" else 0
+        }
+        clean_insert.append(clean_row)
+    for i in range(0, len(clean_insert), 500):
+        supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
 
 # ==========================================
 # 2. HELPERS (Aus deinem alten Code)
@@ -569,11 +591,84 @@ if gen_btn:
     save_fahrten_to_db(user, st.session_state["generated_months_data"])
     st.toast("Fahrten in der Cloud gespeichert!")
 
-# ========= Anzeige & PDF =========
+# ========= Anzeige, Bearbeitung & PDF =========
 df = st.session_state.get("fahrten_df")
 if df is not None:
-    st.dataframe(df, use_container_width=True)
+    st.subheader("✏️ Fahrten anpassen & manuell hinzufügen")
+    
+    # 1. Die Tabelle direkt editierbar machen
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="edit_fahrten_editor")
+    
+    col_save, col_add = st.columns([1, 1])
+    with col_save:
+        if st.button("💾 Änderungen für diesen Monat in der Cloud speichern"):
+            # Sortieren nach Datum für ein sauberes PDF
+            edited_df = edited_df.sort_values(by="datum").reset_index(drop=True)
+            # In DB speichern
+            update_month_in_db(user, jahr, monat, edited_df)
+            # Im RAM aktualisieren
+            st.session_state["generated_months_data"][(jahr, monat)]["data"] = edited_df
+            st.session_state["fahrten_df"] = edited_df
+            st.toast("Änderungen erfolgreich gespeichert!", icon="✅")
+            st.rerun()
+            
+    with col_add:
+        if st.button("➕ Einzelne Fahrt manuell hinzufügen"):
+            st.session_state['show_add_form'] = True
+            
+    # 2. Das Formular für manuelle Einträge
+    if st.session_state.get('show_add_form', False):
+        with st.form("add_trip_form"):
+            st.write("**Neue Fahrt eintragen:**")
+            c1, c2, c3 = st.columns(3)
+            with c1: new_date = st.date_input("Datum")
+            with c2: new_fzg = st.selectbox("Fahrzeug", fahrzeuge_df['bezeichnung'].tolist())
+            with c3: new_route = st.text_input("Reiseweg - Ziel - Zweck")
+            
+            c4, c5, c6, c7 = st.columns(4)
+            with c4: new_km_d = st.number_input("Dienst-KM", 0, 999, 0)
+            with c5: new_km_p = st.number_input("Privat-KM", 0, 999, 0)
+            with c6: new_abf = st.text_input("Abfahrt (HH:MM)", value="08:00")
+            with c7: new_ank = st.text_input("Ankunft (HH:MM)", value="17:00")
+            
+            submitted = st.form_submit_button("✅ Fahrt einfügen")
+            if submitted:
+                # Dauer berechnen
+                try:
+                    h1, m1 = map(int, new_abf.split(':'))
+                    h2, m2 = map(int, new_ank.split(':'))
+                    dauer_min = (h2*60 + m2) - (h1*60 + m1)
+                    dauer_str = f"{dauer_min//60:02d}:{dauer_min%60:02d}"
+                except: dauer_str = "00:00"
+                
+                # Fahrzeug ID herausfinden
+                fz_row = fahrzeuge_df[fahrzeuge_df['bezeichnung'] == new_fzg]
+                fz_id = fz_row['id'].values[0] if not fz_row.empty else 1
+                
+                # Letzten Kilometerstand finden
+                last_km = int(edited_df['abfahrt_km'].max()) if not edited_df.empty else 0
+                
+                # Neue Zeile bauen
+                new_row = {
+                    "datum": new_date, "fahrzeug_id": int(fz_id), "fahrzeug": new_fzg,
+                    "route": new_route, "km_d": int(new_km_d), "km_p": int(new_km_p),
+                    "abf": new_abf, "ank": new_ank, "dauer": dauer_str, "abfahrt_km": last_km
+                }
+                
+                # An Tabelle anfügen
+                new_df = pd.concat([edited_df, pd.DataFrame([new_row])], ignore_index=True)
+                new_df = new_df.sort_values(by="datum").reset_index(drop=True)
+                
+                # Speichern & Reload
+                update_month_in_db(user, jahr, monat, new_df)
+                st.session_state["generated_months_data"][(jahr, monat)]["data"] = new_df
+                st.session_state["fahrten_df"] = new_df
+                st.session_state['show_add_form'] = False
+                st.rerun()
+
+    st.markdown("---")
     st.subheader("📄 PDF-Export")
+
     if modus == "Ganzes Jahr" and st.session_state["generated_months_data"]:
         monate_namen = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
         available_months = sorted([key for key in st.session_state["generated_months_data"].keys()])
