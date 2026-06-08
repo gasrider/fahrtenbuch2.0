@@ -710,3 +710,46 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                         st.rerun()
 
 else: st.info("Um die Kilometerstände anpassen zu können, muss zuerst das gesamte Jahr generiert werden.")
+    # ==========================================
+# 5. ADMIN BEREICH (Nur für dich sichtbar)
+# ==========================================
+# Trage hier exakt deinen Login-Namen ein (klein geschrieben!)
+ADMIN_USERS = ["christian mayerhofer"] 
+
+if user in ADMIN_USERS:
+    st.markdown("---")
+    with st.expander("👑 Admin-Bereich"):
+        st.subheader("Passwort eines Users zurücksetzen")
+        
+        # Lade alle registrierten User aus der Datenbank
+        response = supabase.table("users").select("username").execute()
+        all_users = [r["username"] for r in response.data]
+        
+        if all_users:
+            selected_user = st.selectbox("User auswählen", all_users, key="admin_user_select")
+            new_pw = st.text_input("Neues Passwort für diesen User", type="password", key="admin_pw_reset")
+            
+            if st.button("🔐 Passwort jetzt ändern"):
+                if new_pw:
+                    hashed_pw = hashlib.sha256(new_pw.encode()).hexdigest()
+                    supabase.table("users").update({"password": hashed_pw}).eq("username", selected_user).execute()
+                    st.success(f"Passwort für **{selected_user}** wurde erfolgreich geändert! Er kann sich sofort damit einloggen.")
+                else:
+                    st.warning("Bitte gib ein neues Passwort ein.")
+            
+            st.markdown("---")
+            st.subheader(f"📁 Daten von {selected_user} ansehen")
+            
+            # Lade die Daten des ausgewählten Users (ohne ihn zu verändern!)
+            u_settings = load_settings(selected_user)
+            u_fahrzeuge = load_fahrzeuge(selected_user)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Stammdaten:**")
+                if u_settings: st.json(u_settings)
+                else: st.info("Noch keine Stammdaten hinterlegt.")
+            with col2:
+                st.write("**Fahrzeuge:**")
+                if not u_fahrzeuge.empty: st.dataframe(u_fahrzeuge)
+                else: st.info("Noch keine Fahrzeuge hinterlegt.")
