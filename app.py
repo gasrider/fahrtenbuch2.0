@@ -49,10 +49,26 @@ def load_settings(username):
     return response.data[0] if response.data else {}
 
 def save_fahrzeuge(username, df):
-    supabase.table("fahrzeuge").delete().eq("username", username).execute()
-    df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
-    for row in df_insert: row["username"] = username
-    if df_insert: supabase.table("fahrzeuge").insert(df_insert).execute()
+    try:
+        supabase.table("fahrzeuge").delete().eq("username", username).execute()
+        # LÖSUNG: Ignoriere komplett leere Zeilen direkt hier!
+        df = df.dropna(how='all')
+        df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
+        clean_insert = []
+        for row in df_insert:
+            clean_row = {
+                "username": username,
+                "bezeichnung": str(row.get("bezeichnung", "")).strip(),
+                "kennzeichen": str(row.get("kennzeichen", "")).strip(),
+                # LÖSUNG: Entfernt Punkte und Kommas aus Zahlen (z.B. 50.000 -> 50000)
+                "start_km_vorjahr": int(str(row.get("start_km_vorjahr", 0)).replace('.', '').replace(',', '').strip() or 0),
+                "privat_km_min": int(str(row.get("privat_km_min", 0)).replace('.', '').replace(',', '').strip() or 0),
+                "privat_km_max": int(str(row.get("privat_km_max", 0)).replace('.', '').replace(',', '').strip() or 0)
+            }
+            clean_insert.append(clean_row)
+        if clean_insert: supabase.table("fahrzeuge").insert(clean_insert).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Fahrzeuge: {getattr(e, 'message', str(e))}")
 
 def load_fahrzeuge(username):
     response = supabase.table("fahrzeuge").select("*").eq("username", username).order("id").execute()
@@ -60,12 +76,28 @@ def load_fahrzeuge(username):
     return pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max"])
 
 def save_zeitraeume(username, df):
-    supabase.table("zeitraeume").delete().eq("username", username).execute()
-    df_save = df[["fahrzeug_id", "von", "bis"]].copy()
-    df_save["username"] = username
-    df_insert = df_save.to_dict('records')
-    if df_insert: supabase.table("zeitraeume").insert(df_insert).execute()
-
+    try:
+        supabase.table("zeitraeume").delete().eq("username", username).execute()
+        # LÖSUNG: Ignoriere komplett leere Zeilen
+        df = df.dropna(how='all') 
+        df_save = df[["fahrzeug_id", "von", "bis"]].copy()
+        df_insert = df_save.to_dict('records')
+        clean_insert = []
+        for row in df_insert:
+            # LÖSUNG: Prüfe auf 'NaT' (Not a Time) bei Datumsfeldern
+            von_str = str(row.get("von", ""))[:10] if pd.notna(row.get("von")) and "NaT" not in str(row["von"]) else None
+            bis_str = str(row.get("bis", ""))[:10] if pd.notna(row.get("bis")) and "NaT" not in str(row["bis"]) else None
+            
+            clean_row = {
+                "username": username,
+                "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
+                "von": von_str, 
+                "bis": bis_str
+            }
+            clean_insert.append(clean_row)
+        if clean_insert: supabase.table("zeitraeume").insert(clean_insert).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Zeiträume: {getattr(e, 'message', str(e))}")
 def load_zeitraeume(username):
     response = supabase.table("zeitraeume").select("fahrzeug_id, von, bis").eq("username", username).execute()
     if response.data: return pd.DataFrame(response.data)
