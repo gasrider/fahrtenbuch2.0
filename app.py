@@ -284,7 +284,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 
     fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
 story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal'])
-story.append(paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
+story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
 story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])
 story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])
 story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0} km", styles['Normal'])
