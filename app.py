@@ -290,10 +290,13 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
     sub_headers = ["", "dienstl.", "privat", "PKW", "EUR", "EUR"]
     data = [headers, sub_headers]; km_geld_satz = 0.42; total_dienstl = 0; total_privat = 0; total_km_geld = 0; total_taggeld = 0
-    for i, monat_name in enumerate(monate):
-        monat_key = (jahr, i + 1)
-        if monat_key in generated_data:
-            df = generated_data[monat_key]["data"]; sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
+        for i, monat_name in enumerate(monate):
+            monat_key = (jahr, i + 1)
+            if monat_key in generated_data:
+                # SICHERHEIT: Verhindert den Absturz, falls das Format fehlerhaft ist
+                month_data = generated_data[monat_key]
+                df = month_data["data"] if isinstance(month_data, dict) and "data" in month_data else month_data
+                if df.empty: continue # Überspringt Monate ohne Fahrten; sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
             sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
             total_dienstl += sum_dienstl; total_privat += sum_privat; total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz; total_taggeld += sum_taggeld
             data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
@@ -669,7 +672,7 @@ if gen_btn:
                 df = pd.DataFrame(corrected_rows)
                 for fz_id, km in month_start_km.items(): current_km[fz_id] = km
 
-        st.session_state["generated_months_data"][(jahr, monat_key)] = {"data": df, "end_km": max(current_km.values()) if current_km else 0}
+                st.session_state["generated_months_data"][(jahr, monat_key)] = {"data": df, "end_km": max(current_km.values()) if current_km else 0}
 
     progress_bar.empty()
     st.success(f"Fahrten für {len(monate_zum_generieren)} Monat(e) generiert.")
