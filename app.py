@@ -270,32 +270,78 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     col_widths = [25*mm, 20*mm, 20*mm, 25*mm, 25*mm, 25*mm]
     table = Table(data, colWidths=col_widths, repeatRows=2)
     style = TableStyle([("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, 1), 9), ("FONTSIZE", (0, 2), (-1, -1), 8), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.25, colors.grey), ("BACKGROUND", (0, 0), (-1, 1), colors.whitesmoke), ("SPAN", (2, 0), (4, 0)), ("SPAN", (3, 1), (4, 1)), ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)])
-    table.setStyle(style); story.append(table); story.append(Spacer(1, 20*mm))
+    
+    table.setStyle(style)
+    story.append(table)
+    story.append(Spacer(1, 20*mm))
 
+    # --- Footer-Notizen ---
     small_style = ParagraphStyle('small', parent=styles['Normal'], fontName='Helvetica', fontSize=7)
-    notes = [f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {km_geld_satz:.2f}", "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0.00", f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00", f"km-Geld amtlich für {total_dienstl + total_privat}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace(','), f"Taggeld + km-Geld amtlich: EUR {(total_km_geld + total_taggeld):.2f}".replace('.', ','), "Vom Dienstgeber vergütete Reisekosten: EUR 0,00", "Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR ......................", "Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben."]
-    for note in notes: story.append(Paragraph(note, small_style)); story.append(Spacer(1, 2*mm))
+    notes = [
+        f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {km_geld_satz:.2f}",
+        "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0.00",
+        f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00",
+        f"km-Geld amtlich für {total_dienstl + total_privat}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), 
+        f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), 
+        f"Taggeld + km-Geld amtlich: EUR {(total_km_geld + total_taggeld):.2f}".replace('.', ','), 
+        "Vom Dienstgeber vergütete Reisekosten: EUR 0,00",
+        "Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR ......................",
+        "Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben."
+    ]
+    for note in notes:
+        story.append(Paragraph(note, small_style))
+        story.append(Spacer(1, 2*mm))
 
+    # --- NEU: Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
     vehicle_km_summary = {}
     for month_key, month_data in generated_data.items():
         df = month_data['data']
         if not df.empty:
             summary = df.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
             for fz_id, row in summary.iterrows():
-                if fz_id not in vehicle_km_summary: vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d']); vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
+                if fz_id not in vehicle_km_summary:
+                    vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
+                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
+                vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
 
-    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]; data = [headers]; total_km_d = 0
+    fahrzeuge_df = st.session_state['fahrzeuge_df']
+    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
+    data = [headers]
+    total_km_d = 0
+
     for fz_id, kms in vehicle_km_summary.items():
         if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
-            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]; name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']; km_d = kms['km_d']; total_km_d += km_d
+            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
+            name = vehicle_info['bezeichnung']
+            kennzeichen = vehicle_info['kennzeichen']
+            
+            km_d = kms['km_d']
+            total_km_d += km_d
+            
             data.append([name, kennzeichen, f"{km_d}"])
+            
     data.append(["Summen", "", f"{total_km_d}"])
-    col_widths = [33*mm, 20*mm, 20*mm]; vehicle_table = Table(data, colWidths=col_widths)
-    vehicle_table.setStyle(TableStyle([("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8), ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.25, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke), ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
-    story.append(Spacer(1, 10*mm)); story.append(vehicle_table)
-    doc.build(story); buf.seek(0); return buf
 
+    col_widths = [33*mm, 20*mm, 20*mm]
+    vehicle_table = Table(data, colWidths=col_widths)
+    vehicle_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    
+    story.append(Spacer(1, 10*mm))
+    story.append(vehicle_table)
+    doc.build(story)
+    buf.seek(0)
+    return buf
 # ==========================================
 # 4. STREAMLIT APP & LOGIK
 # ==========================================
