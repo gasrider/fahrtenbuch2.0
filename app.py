@@ -278,16 +278,16 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story = []
     styles = getSampleStyleSheet()
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
-    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2'])
+    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
     story.append(Spacer(1, 8*mm))
 
    fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
-story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal'])
-story.append(Paragraph(f"paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
-story.append(Paragraph(f"paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['normal'))
-story.append(Paragraph(f"paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['normal'))
-story.append(Paragraph(f"paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0} km", styles['normal'))
-story.append(Paragraph(f"paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['normal'))
+story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal']))
+story.append(Paragraph(f"paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])))
+story.append(Paragraph(f"paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['normal')))
+story.append(Paragraph(f"paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['normal')))
+story.append(Paragraph(f"paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0} km", styles['normal')))
+story.append(Paragraph(f"paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['normal')))
 story.append(Spacer(1, 10*mm))
 
     headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
