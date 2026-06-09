@@ -339,8 +339,6 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
                 total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
                 total_taggeld += sum_taggeld
                 data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
-        
-        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
 
     col_widths = [33*mm, 20*mm, 20*mm]
     vehicle_table = Table(data, colWidths=col_widths)
