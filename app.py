@@ -312,50 +312,35 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 
     # --- Footer-Notizen ---
     small_style = ParagraphStyle('small', parent=styles['Normal'], fontName='Helvetica', fontSize=7)
-    notes = [
-        f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {km_geld_satz:.2f}",
-        "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0.00",
-        f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00",
-        f"km-Geld amtlich für {total_dienstl + total_privat}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), 
-        f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), 
-        f"Taggeld + km-Geld amtlich: EUR {(total_km_geld + total_taggeld):.2f}".replace('.', ','), 
-        "Vom Dienstgeber vergütete Reisekosten: EUR 0,00",
-        "Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR ......................",
-        "Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben."
-    ]
-    for note in notes:
-        story.append(Paragraph(note, small_style))
-        story.append(Spacer(1, 2*mm))
+         notes = [
+            f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {km_geld_satz:.2f}",
+            "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0.00",
+            f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00",
+            f"km-Geld amtlich für {total_dienstl + total_privat}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), 
+            f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), 
+            f"Taggeld + km-Geld amtlich: EUR {(total_km_geld + total_taggeld):.2f}".replace('.', ','), 
+            "Vom Dienstgeber vergütete Reisekosten: EUR 0,00",
+            "Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR ......................",
+            "Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben."
+        ]
+        for i, monat_name in enumerate(monate):
+            monat_key = (jahr, i + 1)
+            if monat_key in generated_data:
+                # SICHERHEIT: Verhindert den Absturz, falls das Format fehlerhaft ist
+                month_data = generated_data[monat_key]
+                df = month_data["data"] if isinstance(month_data, dict) and "data" in month_data else month_data
+                if df.empty: continue # Überspringt Monate ohne Fahrten
 
-    # --- NEU: Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
-    vehicle_km_summary = {}
-    for month_key, month_data in generated_data.items():
-        df = month_data['data']
-        if not df.empty:
-            summary = df.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
-            for fz_id, row in summary.iterrows():
-                if fz_id not in vehicle_km_summary:
-                    vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
-                vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
-
-    fahrzeuge_df = st.session_state['fahrzeuge_df']
-    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
-    data = [headers]
-    total_km_d = 0
-
-    for fz_id, kms in vehicle_km_summary.items():
-        if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
-            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
-            name = vehicle_info['bezeichnung']
-            kennzeichen = vehicle_info['kennzeichen']
-            
-            km_d = kms['km_d']
-            total_km_d += km_d
-            
-            data.append([name, kennzeichen, f"{km_d}"])
-            
-    data.append(["Summen", "", f"{total_km_d}"])
+                sum_dienstl = int(df["km_d"].sum())
+                sum_privat = int(df["km_p"].sum())
+                sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
+                total_dienstl += sum_dienstl
+                total_privat += sum_privat
+                total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
+                total_taggeld += sum_taggeld
+                data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
+        
+        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
 
     col_widths = [33*mm, 20*mm, 20*mm]
     vehicle_table = Table(data, colWidths=col_widths)
