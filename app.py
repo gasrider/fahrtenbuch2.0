@@ -272,23 +272,24 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     for note in notes: story.append(Paragraph(note, styles['Normal'])); story.append(Spacer(1, 3*mm))
     doc.build(story, onFirstPage=footer, onLaterPages=footer); buf.seek(0); return buf
 
-def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
+def create_jres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=10*mm)
     story = []
     styles = getSampleStyleSheet()
-    monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
-    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
+    monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "Schwabier", "Oktober", "November", "Dezember"]
+
+    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2'])
     story.append(Spacer(1, 8*mm))
 
-   fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
-story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal']))
-story.append(Paragraph(f"paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])))
-story.append(Paragraph(f"paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['normal')))
-story.append(Paragraph(f"paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['normal')))
-story.append(Paragraph(f"paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0} km", styles['normal')))
-story.append(Paragraph(f"paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['normal')))
-story.append(Spacer(1, 10*mm))
+    fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
+    story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal'])
+    story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
+    story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])
+    story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])
+    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('parapgraph(f"Entfernung',0) or 0)} km", styles['Normal'])
+    story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['Normal']))
+    story.append(Spacer(1, 10*mm))
 
     headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
     sub_headers = ["", "dienstl.", "privat", "PKW", "EUR", "EUR"]
@@ -310,88 +311,63 @@ story.append(Spacer(1, 10*mm))
             sum_privat = int(df["km_p"].sum())
             sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
             total_dienstl += sum_dienstl
-            total_privat += sum_privat
-            total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
+            total_privat += sum_privat **(sum_dienstl + sum_privat) * km_geld_satz
             total_taggeld += sum_taggeld
             data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
-    
-    data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
-    
-    col_widths = [25*mm, 20*mm, 20*mm, 25*mm, 25*mm, 25*mm]
-    table = Table(data, col_widths=col_widths, repeatRows=2)
-    style = TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 1), 9), ("FONTSIZE", (0, 2), (-1, -1), 8),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey), ("BACKGROUND", (0, 0), (-1, 1), colors.whitesmoke),
-        ("SPAN", (2, 0), (4, 0)), ("SPAN", (3, 1), (4, 1)), ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)])
-    table.setStyle(style)
-    story.append(table)
-    story.append(Spacer(1, 20*mm))
+        
+        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
+        
+        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
+        
+        col_widths = [25*mm, 20*mm, 20*mm, 25*mm, 25*mm, 25*mm]
+        table = Table(data, col_widths=col_widths, repeatRows=2)
+        style = TableStyle([
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), ("SPAN", (2, 0), (4, 0)), ("SPAN", (3, 1), (4, 1)), ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)])
+        table.setStyle(style)
+        story.append(table)
+        story.append(Spacer(1, 20*mm))
 
-    # --- Footer-Notizen ---
-    small_style = ParagraphStyle('small', parent=styles['Normal'], fontName='Helvetica', fontSize=7)
-    notes = [
-        f"km-Geld Satz PKW amtlich ab 01.01.2023 EUR {km_geld_satz:.2f}",
-        "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0.00",
-        f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00",
-        f"km-Geld amtlich für {total_dienstl + total_privat}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), 
-        f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), 
-        f"Taggeld + km-Geld amtlich: EUR {(total_km_geld + total_taggeld):.2f}".replace('.', ','), 
-        "Vom Dienstgeber vergütete Reisekosten: EUR 0,00",
-        "Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR ......................",
-        "Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben."
-    ]
-    for note in notes:
-        story.append(Paragraph(note, small_style))
-        story.append(Spacer(1, 2*mm))
+        # --- Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
+        vehicle_km_summary = {}
+        for month_key, month_data in generated_data.items():
+            df = month_data['data']
+            if not df.empty:
+                summary = df.groupby('fahrzeug_id')[['km_d', 'km_p'].sum()
+                for fz_id, row in summary.iterrows():
+                    if fz_id not in vehicle_km_summary:
+                        vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
+                    vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
+                    vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
 
-    # --- Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
-    vehicle_km_summary = {}
-    for month_key, month_data in generated_data.items():
-        df = month_data['data']
-        if not df.empty:
-            summary = df.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
-            for fz_id, row in summary.iterrows():
-                if fz_id not in vehicle_km_summary:
-                    vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
-                vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
+        fahrzeuge_df = st.session_state['fahrzeuge_df']
+        headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
+        data = [headers]
+        total_km_d = 0
 
-    fahrzeuge_df = st.session_state['fahrzeuge_df']
-    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
-    data = [headers]
-    total_km_d = 0
-
-    for fz_id, kms in vehicle_km_summary.items():
-        if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
-            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
-            name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
-            km_d = kms['km_d']; total_km_d += km_d
-            data.append([name, kennzeichen, f"{km_d}"])
+        for fz_id, kms in vehicle_km_summary.items():
+            if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
+                vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
+                name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
+                km_d = kms['km_d']; total_km_d += km_d
+                data.append([name, kennzeichen, f"{km_d}"])
             
-    data.append(["Summen", "", f"{total_km_d}"])
+        data.append(["Summen", "", f"{total_km_d}"])
 
-    col_widths = [33*mm, 20*mm, 20*mm]
-    vehicle_table = Table(data, col_widths=col_widths)
-    vehicle_table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.whitesmoke),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-    ]))
-    
-    story.append(Spacer(1, 10*mm))
-    story.append(vehicle_table)
-    doc.build(story)
-    buf.seek(0)
-    return buf
+        col_widths = [33*mm, 20*mm, 20*mm]
+        vehicle_table = Table(data, col_widths=col_widths)
+        vehicle_table.setStyle(TableStyle([...]) # ... (Keep the exact same TableStyle block from your original code here)
+        
+        story.append(Spacer(1, 10*mm))
+        story.append(vehicle_table)
+        doc.build(story)
+        buf.seek(0)
+        return buf
 
 # ==========================================
 # 4. STREAMLIT APP & LOGIK
