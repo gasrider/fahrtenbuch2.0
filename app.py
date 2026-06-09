@@ -287,7 +287,7 @@ def create_jres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
     story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])
     story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])
-    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('parapgraph(f"Entfernung',0) or 0)} km", styles['Normal'])
+    story.append(paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('parapgraph(f"Entfernung',0) or 0)} km", styles['Normal'])
     story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['Normal']))
     story.append(Spacer(1, 10*mm))
 
