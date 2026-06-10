@@ -1022,7 +1022,7 @@ if user in ADMIN_USERS:
                 else:
                     st.warning("Bitte gib ein neues Passwort ein.")
             
-                       st.markdown("---")
+            st.markdown("---")
             
             # --- NEU: E-Mail Adresse pflegen ---
             st.subheader("📧 E-Mail-Adresse verwalten (für Passwort-Reset)")
