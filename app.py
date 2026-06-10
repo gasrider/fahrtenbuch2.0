@@ -51,7 +51,6 @@ def load_settings(username):
 def save_fahrzeuge(username, df):
     try:
         supabase.table("fahrzeuge").delete().eq("username", username).execute()
-        # LÖSUNG: Ignoriere komplett leere Zeilen direkt hier!
         df = df.dropna(how='all')
         df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
         clean_insert = []
@@ -60,7 +59,6 @@ def save_fahrzeuge(username, df):
                 "username": username,
                 "bezeichnung": str(row.get("bezeichnung", "")).strip(),
                 "kennzeichen": str(row.get("kennzeichen", "")).strip(),
-                # LÖSUNG: Entfernt Punkte und Kommas aus Zahlen (z.B. 50.000 -> 50000)
                 "start_km_vorjahr": int(str(row.get("start_km_vorjahr", 0)).replace('.', '').replace(',', '').strip() or 0),
                 "privat_km_min": int(str(row.get("privat_km_min", 0)).replace('.', '').replace(',', '').strip() or 0),
                 "privat_km_max": int(str(row.get("privat_km_max", 0)).replace('.', '').replace(',', '').strip() or 0)
@@ -78,13 +76,11 @@ def load_fahrzeuge(username):
 def save_zeitraeume(username, df):
     try:
         supabase.table("zeitraeume").delete().eq("username", username).execute()
-        # LÖSUNG: Ignoriere komplett leere Zeilen
         df = df.dropna(how='all') 
         df_save = df[["fahrzeug_id", "von", "bis"]].copy()
         df_insert = df_save.to_dict('records')
         clean_insert = []
         for row in df_insert:
-            # LÖSUNG: Prüfe auf 'NaT' (Not a Time) bei Datumsfeldern
             von_str = str(row.get("von", ""))[:10] if pd.notna(row.get("von")) and "NaT" not in str(row["von"]) else None
             bis_str = str(row.get("bis", ""))[:10] if pd.notna(row.get("bis")) and "NaT" not in str(row["bis"]) else None
             
@@ -98,6 +94,7 @@ def save_zeitraeume(username, df):
         if clean_insert: supabase.table("zeitraeume").insert(clean_insert).execute()
     except Exception as e:
         st.error(f"Fehler beim Speichern der Zeiträume: {getattr(e, 'message', str(e))}")
+        
 def load_zeitraeume(username):
     response = supabase.table("zeitraeume").select("fahrzeug_id, von, bis").eq("username", username).execute()
     if response.data: return pd.DataFrame(response.data)
@@ -111,7 +108,6 @@ def save_fahrten_to_db(username, generated_data):
             supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
             df_insert = df.to_dict('records')
             
-            # WICHTIG: Numpy-Datentypen in Standard-Python übersetzen!
             clean_insert = []
             for row in df_insert:
                 clean_row = {
@@ -131,10 +127,9 @@ def save_fahrten_to_db(username, generated_data):
                 }
                 clean_insert.append(clean_row)
             
-            # In 500er Blöcken hochladen, da Supabase Limits hat
             for i in range(0, len(clean_insert), 500):
                 supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
-				
+                
 def update_month_in_db(username, jahr, monat, df):
     """Überschreibt einen spezifischen Monat in der DB (für manuelle Korrekturen)."""
     supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
@@ -201,7 +196,7 @@ def extrahiere_ort(vollstaendige_adresse):
     return part_cleaned if part_cleaned else part
 
 # ==========================================
-# 3. PDF GENERATOREN (Dein exaktes Layout!)
+# 3. PDF GENERATOREN
 # ==========================================
 def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
@@ -272,28 +267,35 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     for note in notes: story.append(Paragraph(note, styles['Normal'])); story.append(Spacer(1, 3*mm))
     doc.build(story, onFirstPage=footer, onLaterPages=footer); buf.seek(0); return buf
 
-def create_jres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
+def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=10*mm)
     story = []
     styles = getSampleStyleSheet()
-    monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "Schwabier", "Oktober", "November", "Dezember"]
+    monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
-    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2'])
+    # FIX 1: Klammer hinzugefügt
+    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
     story.append(Spacer(1, 8*mm))
 
     fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
-    story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal'])
-    story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])
-    story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])
-    story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])
-    story.append(paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('parapgraph(f"Entfernung',0) or 0)} km", styles['Normal'])
+    story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal']))
+    story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal']))
+    story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal']))
+    story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal']))
+    
+    # FIX 2: Komplett zerschossene Zeile repariert
+    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", styles['Normal']))
+    
+    # FIX 3: Klammer-Fehler behoben
     story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['Normal']))
     story.append(Spacer(1, 10*mm))
 
-    headers = ["Monat", "gefahrene km", "km-Geld", "amtlich.", "Taggeld"]
-    sub_headers = ["", "dienstl.", "privat", "PKW", "EUR", "EUR"]
+    # FIX 4: Header an Daten angepasst (5 Spalten)
+    headers = ["Monat", "gefahrene km", "km-Geld", "Taggeld"]
+    sub_headers = ["", "dienstl.", "privat", "EUR", "EUR"]
     data = [headers, sub_headers]
+    
     km_geld_satz = float(user_info.get('km_geld', 0.42))
     total_dienstl = 0
     total_privat = 0
@@ -311,63 +313,78 @@ def create_jres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
             sum_privat = int(df["km_p"].sum())
             sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
             total_dienstl += sum_dienstl
-            total_privat += sum_privat **(sum_dienstl + sum_privat) * km_geld_satz
+            total_privat += sum_privat 
+            
+            # FIX 5: Der ** Operator wurde durch ein + ersetzt und Variable korrigiert
+            total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
             total_taggeld += sum_taggeld
             data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
         
-        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
+    # FIX 6: Summen-Zeile aus der Schleife herausgezogen
+    data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
+    
+    col_widths = [30*mm, 25*mm, 25*mm, 30*mm, 30*mm]
+    table = Table(data, colWidths=col_widths, repeatRows=2)
+    style = TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), 
+        ("SPAN", (1, 0), (2, 0)), # Passt zu "gefahrene km"
+        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)
+    ])
+    table.setStyle(style)
+    story.append(table)
+    story.append(Spacer(1, 20*mm))
+
+    # --- Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
+    vehicle_km_summary = {}
+    for month_key, month_data in generated_data.items():
+        df = month_data['data']
+        if not df.empty:
+            summary = df.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
+            for fz_id, row in summary.iterrows():
+                if fz_id not in vehicle_km_summary:
+                    vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
+                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
+                vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
+
+    fahrzeuge_df = st.session_state['fahrzeuge_df']
+    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
+    data = [headers]
+    total_km_d = 0
+
+    for fz_id, kms in vehicle_km_summary.items():
+        if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
+            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
+            name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
+            km_d = kms['km_d']; total_km_d += km_d
+            data.append([name, kennzeichen, f"{km_d}"])
         
-        data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
-        
-        col_widths = [25*mm, 20*mm, 20*mm, 25*mm, 25*mm, 25*mm]
-        table = Table(data, col_widths=col_widths, repeatRows=2)
-        style = TableStyle([
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), ("SPAN", (2, 0), (4, 0)), ("SPAN", (3, 1), (4, 1)), ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)])
-        table.setStyle(style)
-        story.append(table)
-        story.append(Spacer(1, 20*mm))
+    data.append(["Summen", "", f"{total_km_d}"])
 
-        # --- Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
-        vehicle_km_summary = {}
-        for month_key, month_data in generated_data.items():
-            df = month_data['data']
-            if not df.empty:
-                summary = df.groupby('fahrzeug_id')[['km_d', 'km_p'].sum()
-                for fz_id, row in summary.iterrows():
-                    if fz_id not in vehicle_km_summary:
-                        vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
-                    vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
-                    vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
-
-        fahrzeuge_df = st.session_state['fahrzeuge_df']
-        headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
-        data = [headers]
-        total_km_d = 0
-
-        for fz_id, kms in vehicle_km_summary.items():
-            if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
-                vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
-                name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
-                km_d = kms['km_d']; total_km_d += km_d
-                data.append([name, kennzeichen, f"{km_d}"])
-            
-        data.append(["Summen", "", f"{total_km_d}"])
-
-        col_widths = [33*mm, 20*mm, 20*mm]
-        vehicle_table = Table(data, col_widths=col_widths)
-        vehicle_table.setStyle(TableStyle([...]) # ... (Keep the exact same TableStyle block from your original code here)
-        
-        story.append(Spacer(1, 10*mm))
-        story.append(vehicle_table)
-        doc.build(story)
-        buf.seek(0)
-        return buf
+    col_widths = [33*mm, 20*mm, 20*mm]
+    vehicle_table = Table(data, colWidths=col_widths)
+    
+    # FIX 7: Abgebrochenen TableStyle repariert und geschlossen
+    vehicle_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)
+    ]))
+    
+    story.append(Spacer(1, 10*mm))
+    story.append(vehicle_table)
+    doc.build(story)
+    buf.seek(0)
+    return buf
 
 # ==========================================
 # 4. STREAMLIT APP & LOGIK
@@ -583,7 +600,6 @@ if gen_btn:
                     fahrzeit_min = int(km_d / 80 * 60)
                     pause_min = int(rng.integers(20, 60))
                     dauer_min = fahrzeit_min + pause_min
-                    # 🎲 ANTI-MUSTER: Normalverteilung für Arbeitsbeginn (meist 07:45 - 08:15 Uhr)
                     start_minute = int(np.clip(rng.normal(480, 20), 420, 540)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
                     ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
@@ -628,7 +644,6 @@ if gen_btn:
                     fahrzeit_min = int(total_km / 80 * 60)
                     pause_min = int(rng.integers(30, 90))
                     dauer_min = fahrzeit_min + pause_min
-                    # 🎲 ANTI-MUSTER: Früher Start für die große Tour (meist 07:15 - 07:45 Uhr)
                     start_minute = int(np.clip(rng.normal(445, 20), 390, 510)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
                     ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
@@ -664,14 +679,16 @@ if gen_btn:
                 df = pd.DataFrame(corrected_rows)
                 for fz_id, km in month_start_km.items(): current_km[fz_id] = km
 
-                st.session_state["generated_months_data"][(jahr, monat_key)] = {"data": df, "end_km": max(current_km.values()) if current_km else 0}
+        # FIX 8: RIESIGER LOGIK-FEHLER BEHOBEN. 
+        # Diese Zeile war vorher tief eingerückt und wurde nur bei Skalierung ausgeführt!
+        # Jetzt wird der Monat IMMER gespeichert.
+        st.session_state["generated_months_data"][(jahr, monat_key)] = {"data": df, "end_km": max(current_km.values()) if current_km else 0}
 
     progress_bar.empty()
     st.success(f"Fahrten für {len(monate_zum_generieren)} Monat(e) generiert.")
     last_monat_key = (jahr, monate_zum_generieren[-1])
     st.session_state["fahrten_df"] = st.session_state["generated_months_data"][last_monat_key]["data"]
     
-    # NEU: In Supabase speichern statt pickle!
     save_fahrten_to_db(user, st.session_state["generated_months_data"])
     st.toast("Fahrten in der Cloud gespeichert!")
 
@@ -680,17 +697,13 @@ df = st.session_state.get("fahrten_df")
 if df is not None:
     st.subheader("✏️ Fahrten anpassen & manuell hinzufügen")
     
-    # 1. Die Tabelle direkt editierbar machen
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="edit_fahrten_editor")
     
     col_save, col_add = st.columns([1, 1])
     with col_save:
         if st.button("💾 Änderungen für diesen Monat in der Cloud speichern"):
-            # Sortieren nach Datum für ein sauberes PDF
             edited_df = edited_df.sort_values(by="datum").reset_index(drop=True)
-            # In DB speichern
             update_month_in_db(user, jahr, monat, edited_df)
-            # Im RAM aktualisieren
             st.session_state["generated_months_data"][(jahr, monat)]["data"] = edited_df
             st.session_state["fahrten_df"] = edited_df
             st.toast("Änderungen erfolgreich gespeichert!", icon="✅")
@@ -700,7 +713,6 @@ if df is not None:
         if st.button("➕ Einzelne Fahrt manuell hinzufügen"):
             st.session_state['show_add_form'] = True
             
-    # 2. Das Formular für manuelle Einträge
     if st.session_state.get('show_add_form', False):
         with st.form("add_trip_form"):
             st.write("**Neue Fahrt eintragen:**")
@@ -717,7 +729,6 @@ if df is not None:
             
             submitted = st.form_submit_button("✅ Fahrt einfügen")
             if submitted:
-                # Dauer berechnen
                 try:
                     h1, m1 = map(int, new_abf.split(':'))
                     h2, m2 = map(int, new_ank.split(':'))
@@ -725,25 +736,20 @@ if df is not None:
                     dauer_str = f"{dauer_min//60:02d}:{dauer_min%60:02d}"
                 except: dauer_str = "00:00"
                 
-                # Fahrzeug ID herausfinden
                 fz_row = fahrzeuge_df[fahrzeuge_df['bezeichnung'] == new_fzg]
                 fz_id = fz_row['id'].values[0] if not fz_row.empty else 1
                 
-                # Letzten Kilometerstand finden
                 last_km = int(edited_df['abfahrt_km'].max()) if not edited_df.empty else 0
                 
-                # Neue Zeile bauen
                 new_row = {
                     "datum": new_date, "fahrzeug_id": int(fz_id), "fahrzeug": new_fzg,
                     "route": new_route, "km_d": int(new_km_d), "km_p": int(new_km_p),
                     "abf": new_abf, "ank": new_ank, "dauer": dauer_str, "abfahrt_km": last_km
                 }
                 
-                # An Tabelle anfügen
                 new_df = pd.concat([edited_df, pd.DataFrame([new_row])], ignore_index=True)
                 new_df = new_df.sort_values(by="datum").reset_index(drop=True)
                 
-                # Speichern & Reload
                 update_month_in_db(user, jahr, monat, new_df)
                 st.session_state["generated_months_data"][(jahr, monat)]["data"] = new_df
                 st.session_state["fahrten_df"] = new_df
@@ -883,16 +889,16 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                         st.session_state["fahrten_df"] = st.session_state["generated_months_data"][last_month_key]["data"]
                         st.success("Kilometerstände und HU-Fahrten wurden erfolgreich korrigiert!")
                         
-                        # NEU: In Supabase speichern!
                         save_fahrten_to_db(user, st.session_state["generated_months_data"])
                         st.toast("Korrekturen in Cloud gespeichert!")
                         st.rerun()
 
-else: st.info("Um die Kilometerstände anpassen zu können, muss zuerst das gesamte Jahr generiert werden.")
-    # ==========================================
+else: 
+    st.info("Um die Kilometerstände anpassen zu können, muss zuerst das gesamte Jahr generiert werden.")
+
+# ==========================================
 # 5. ADMIN BEREICH (Nur für dich sichtbar)
 # ==========================================
-# Trage hier exakt deinen Login-Namen ein (klein geschrieben!)
 ADMIN_USERS = ["christian mayerhofer"] 
 
 if user in ADMIN_USERS:
@@ -900,7 +906,6 @@ if user in ADMIN_USERS:
     with st.expander("👑 Admin-Bereich"):
         st.subheader("Passwort eines Users zurücksetzen")
         
-        # Lade alle registrierten User aus der Datenbank
         response = supabase.table("users").select("username").execute()
         all_users = [r["username"] for r in response.data]
         
@@ -919,7 +924,6 @@ if user in ADMIN_USERS:
             st.markdown("---")
             st.subheader(f"📁 Daten von {selected_user} ansehen")
             
-            # Lade die Daten des ausgewählten Users (ohne ihn zu verändern!)
             u_settings = load_settings(selected_user)
             u_fahrzeuge = load_fahrzeuge(selected_user)
             
