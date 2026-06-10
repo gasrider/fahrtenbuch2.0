@@ -8,6 +8,27 @@ from datetime import date, datetime, timedelta
 import calendar
 import os
 import hashlib
+import secrets
+import smtplib
+from email.message import EmailMessage
+
+# --- NEU: E-Mail Versand Funktion ---
+def send_reset_email(to_email, new_plain_password):
+    try:
+        msg = EmailMessage()
+        msg.set_content(f"Hallo,\n\nSie haben ein neues Passwort für das Fahrtenbuch-System angefordert.\n\nIhr neues Passwort lautet: {new_plain_password}\n\nBitte loggen Sie sich ein. Sie werden direkt aufgefordert, dieses Passwort sofort durch ein eigenes zu ersetzen.\n\nViele Grüße\nIhr Admin-Team")
+        msg['Subject'] = "Ihr neues Passwort für das Fahrtenbuch"
+        msg['From'] = os.environ.get("SMTP_USER")
+        msg['To'] = to_email
+
+        with smtplib.SMTP(os.environ.get("SMTP_SERVER"), int(os.environ.get("SMTP_PORT"))) as server:
+            server.starttls()
+            server.login(os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASSWORD"))
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        print(f"Fehler beim E-Mail Versand: {e}")
+        return False
 from supabase import create_client, Client
 
 # ---- PDF deps ----
