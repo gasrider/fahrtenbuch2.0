@@ -765,21 +765,31 @@ if gen_btn:
                 km_d = 0; route = "Sonntag"; start_hour = int(rng.integers(9, 18)); fahrzeit_min = int(rng.integers(15, 45))
                 abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=start_hour); ank_dt = abf_dt + timedelta(minutes=fahrzeit_min)
                 abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
+                
             else:
                 current_week = t.isocalendar()[1]; target_day_for_tour = 0 if current_week % 2 == 1 else 1
+                
+                # --- GROSSE TOUR ---
                 if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
                     special_trip_done_this_week = True; km_p = int(user_info.get('entfernung', 25)); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
                     num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
                     for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
                     route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
-                    total_km = km_p + km_d
-                    fahrzeit_min = int(total_km / 80 * 60)
-                    pause_min = int(rng.integers(30, 90))
-                    dauer_min = fahrzeit_min + pause_min
-                    start_minute = int(np.clip(rng.normal(445, 20), 390, 510)) 
+                    
+                    # NEU: Start fest um 08:00 Uhr
+                    start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                    
+                    # NEU: Ende zufällig zwischen 17:00 und 22:00 Uhr
+                    end_hour = int(rng.integers(17, 23)) 
+                    end_minute = int(rng.integers(0, 60))
+                    ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
+                    
+                    # Dauer aus Differenz berechnen (Gesamter Tag abgedeckt)
+                    dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
+                    
+                # --- NORMALE DIENSTFAHRT ---
                 elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
                     prob = wahrscheinlichkeit_dienstfahrt_werktag
                     if prob >= 90: num_stops = rng.integers(1, 3)
@@ -788,9 +798,22 @@ if gen_btn:
                     else: num_stops = rng.integers(2, 5)
                     selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
                     km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
-                    fahrzeit_min = int(km_d / 80 * 60); pause_min = int(rng.integers(20, 60)); dauer_min = fahrzeit_min + pause_min
-                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=8); ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                    
+                    # NEU: Start fest um 08:00 Uhr
+                    start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
+                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                    
+                    # NEU: Ende zufällig zwischen 17:00 und 22:00 Uhr
+                    end_hour = int(rng.integers(17, 23)) 
+                    end_minute = int(rng.integers(0, 60))
+                    ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
+                    
+                    # Dauer aus Differenz berechnen (Gesamter Tag abgedeckt)
+                    dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
+
+            abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
+                
 
             abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
             out.append({"datum": t.date(), "fahrzeug_id": fahrzeug_id, "fahrzeug": fahrzeug_name, "route": route, "km_d": km_d, "km_p": km_p, "abf": abf, "ank": ank, "dauer": dauer, "abfahrt_km": abfahrt_km})
