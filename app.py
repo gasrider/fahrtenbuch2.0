@@ -235,7 +235,52 @@ def extrahiere_ort(vollstaendige_adresse):
     part = vollstaendige_adresse.split(',')[-1].strip() if ',' in vollstaendige_adresse else vollstaendige_adresse.strip()
     part_cleaned = re.sub(r'^[A-Za-z]?-?\d{4,5}\s+', '', part)
     return part_cleaned if part_cleaned else part
+# ==========================================
+# RED FLAG SCANNER (Plausibilitätsprüfung)
+# ==========================================
+def scan_for_red_flags(df, jahr, monat):
+    """Scannt den Dataframe auf unrealistische Werte und gibt Warnungen zurück."""
+    flags = []
+    if df.empty: return flags
+    
+    for _, row in df.iterrows():
+        datum_str = str(row["datum"])
+        total_km = int(row.get("km_d", 0)) + int(row.get("km_p", 0))
+        
+        # 1. Check: Unrealistische Geschwindigkeit (z.B. 150 km in 20 Minuten -> 450 km/h)
+        if total_km > 0:
+            try:
+                h, m = map(int, str(row["dauer"]).split(':'))
+                dauer_min = h * 60 + m
+                if dauer_min > 0:
+                    geschwindigkeit = (total_km / dauer_min) * 60
+                    if geschwindigkeit > 130: # Höher als 130 km/h Durchschnitt ist verdächtig
+                        flags.append(f"🚨 {datum_str}: Unrealistische Geschwindigkeit! {total_km} km in {row['dauer']} Std. (~{geschwindigkeit:.0f} km/h).")
+            except: pass
+            
+        # 2. Check: Fahrt generiert, aber 0 Km eingetragen
+        ignore_routes = ["Keine Fahrt", "Sonntag", "Feiertag", "Urlaub", "Urlaub (Urlaubs-FZ nicht verfügbar)"]
+        if total_km == 0 and str(row["route"]) not in ignore_routes:
+            flags.append(f"🚨 {datum_str}: Eine Dienstreise ('{str(row['route'])[:30]}...') wurde eingetragen, aber es stehen 0 km drin!")
+            
+        # 3. Check: Ankunft vor Abfahrt (z.B. Abf 17:00, Ank 08:00)
+        try:
+            abf_h, abf_m = map(int, str(row["abf"]).split(':'))
+            ank_h, ank_m = map(int, str(row["ank"]).split(':'))
+            abf_min = abf_h * 60 + abf_m
+            ank_min = ank_h * 60 + ank_m
+            if ank_min < abf_min and total_km > 0:
+                flags.append(f"🚨 {datum_str}: Ankunft ({row['ank']}) ist vor der Abfahrt ({row['abf']} Uhr) eingetragen!")
+        except: pass
 
+    # 4. Check: Doppelte Abfahrtszeiten am selben Tag (nur wenn mehr als 1 Fahrt am Tag)
+    for datum, group in df.groupby("datum"):
+        if len(group) > 1:
+            if group["abf"].nunique() < len(group):
+                flags.append(f"🚨 {str(datum)[:10]}: Mehrere Fahrten haben exakt dieselbe Abfahrtszeit ({group['abf'].iloc[0]} Uhr).")
+
+    return flags
+    
 # ==========================================
 # 3. PDF GENERATOREN
 # ==========================================
@@ -850,6 +895,17 @@ if gen_btn:
 # ========= Anzeige, Bearbeitung & PDF =========
 df = st.session_state.get("fahrten_df")
 if df is not None:
+    
+    # --- NEU: RED FLAG SCANNER AUSFÜHREN ---
+    # Wir scannen immer den aktuell angezeigten Monat
+    red_flags = scan_for_red_flags(df, jahr, monat)
+    if red_flags:
+        st.error("⚠️ Plausibilitätsprüfung fehlgeschlagen! Bitte korrigiere folgende Fehler im Fahrtenbuch, bevor du das PDF exportierst:")
+        for flag in red_flags:
+            st.warning(flag)
+        st.markdown("---")
+    # --- ENDE SCANNER ---
+
     st.subheader("✏️ Fahrten anpassen & manuell hinzufügen")
     
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="edit_fahrten_editor")
