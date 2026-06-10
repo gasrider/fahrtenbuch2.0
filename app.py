@@ -12,23 +12,33 @@ import secrets
 import smtplib
 from email.message import EmailMessage
 
-# --- NEU: E-Mail Versand Funktion ---
+# --- NEU: E-Mail Versand Funktion (KORRIGIERT) ---
 def send_reset_email(to_email, new_plain_password):
     try:
+        smtp_server = os.environ.get("SMTP_SERVER")
+        smtp_port = os.environ.get("SMTP_PORT")
+        smtp_user = os.environ.get("SMTP_USER")
+        smtp_password = os.environ.get("SMTP_PASSWORD")
+        
+        if not all([smtp_server, smtp_port, smtp_user, smtp_password]):
+            print("Fehler: SMTP Umgebungsvariablen nicht vollständig gesetzt")
+            return False
+
         msg = EmailMessage()
         msg.set_content(f"Hallo,\n\nSie haben ein neues Passwort für das Fahrtenbuch-System angefordert.\n\nIhr neues Passwort lautet: {new_plain_password}\n\nBitte loggen Sie sich ein. Sie werden direkt aufgefordert, dieses Passwort sofort durch ein eigenes zu ersetzen.\n\nViele Grüße\nIhr Admin-Team")
         msg['Subject'] = "Ihr neues Passwort für das Fahrtenbuch"
-        msg['From'] = os.environ.get("SMTP_USER")
+        msg['From'] = smtp_user
         msg['To'] = to_email
 
-        with smtplib.SMTP(os.environ.get("SMTP_SERVER"), int(os.environ.get("SMTP_PORT"))) as server:
+        with smtplib.SMTP(smtp_server, int(smtp_port)) as server:
             server.starttls()
-            server.login(os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASSWORD"))
+            server.login(smtp_user, smtp_password)
             server.send_message(msg)
         return True
     except Exception as e:
         print(f"Fehler beim E-Mail Versand: {e}")
         return False
+
 from supabase import create_client, Client
 
 # ---- PDF deps ----
@@ -44,27 +54,34 @@ except Exception as e:
     REPORTLAB_OK = False
 
 # ==========================================
-# 1. SUPABASE DATENBANK-SCHICHT
+# 1. SUPABASE DATENBANK-SCHICHT (KORRIGIERT)
 # ==========================================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error("❌ FEHLER: Umgebungsvariablen SUPABASE_URL und SUPABASE_KEY müssen gesetzt sein!")
+    st.stop()
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def add_user(username, password, email):
     clean_username = username.strip().lower()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     try: 
-        supabase.table("users").insert({"username": clean_username, "password": hashed_pw, "email": email.strip().lower(), "force_pw_change": False}).execute()
+        # KORREKTUR: force_pw_change auf True gesetzt bei Registrierung
+        supabase.table("users").insert({"username": clean_username, "password": hashed_pw, "email": email.strip().lower(), "force_pw_change": True}).execute()
         return True
-    except: return False
+    except Exception as e:
+        print(f"Fehler bei Registrierung: {e}")
+        return False
 
 def verify_user(username, password):
     clean_username = username.strip().lower()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    # WICHTIG: Wir holen jetzt auch die E-Mail und den force_pw_change Status ab
     response = supabase.table("users").select("username, password, email, force_pw_change").eq("username", clean_username).eq("password", hashed_pw).execute()
     if len(response.data) > 0:
-        return True, response.data[0] # Gibt True und die User-Daten zurück
+        return True, response.data[0]
     return False, {}
 
 def save_settings(username, data_dict):
@@ -75,7 +92,6 @@ def save_settings(username, data_dict):
         "wohnort": data_dict.get('wohnort',''), 
         "dienstort": data_dict.get('dienstort',''), 
         "entfernung": data_dict.get('entfernung', 0),
-        # --- NEU: Finanzwerte ---
         "taggeld_kurz": data_dict.get('taggeld_kurz', 14.70),
         "taggeld_mittel": data_dict.get('taggeld_mittel', 29.40),
         "taggeld_lang": data_dict.get('taggeld_lang', 29.40),
@@ -90,10 +106,13 @@ def save_fahrzeuge(username, df):
     try:
         supabase.table("fahrzeuge").delete().eq("username", username).execute()
         df = df.dropna(how='all')
-        df_insert = df.drop(columns=['id', 'username'], errors='ignore').to_dict('records')
+        # KORREKTUR: 'id' NICHT mehr droppen, um Foreign Keys nicht zu zerstören
+        df_insert = df.drop(columns=['username'], errors='ignore').to_dict('records')
         clean_insert = []
         for row in df_insert:
             clean_row = {
+                # KORREKTUR: ID beibehalten wenn vorhanden, sonst None (Supabase generiert neue)
+                "id": int(row["id"]) if pd.notna(row.get("id")) and str(row.get("id")) not in ["nan", "None", ""] else None,
                 "username": username,
                 "bezeichnung": str(row.get("bezeichnung", "")).strip(),
                 "kennzeichen": str(row.get("kennzeichen", "")).strip(),
@@ -139,7 +158,6 @@ def load_zeitraeume(username):
     return pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 def save_fahrten_to_db(username, generated_data):
-    """Speichert generierte Fahrten aus dem RAM in Supabase (mit Typ-Korrektur)."""
     for (jahr, monat), month_data in generated_data.items():
         df = month_data["data"]
         if not df.empty:
@@ -169,7 +187,6 @@ def save_fahrten_to_db(username, generated_data):
                 supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
                 
 def update_month_in_db(username, jahr, monat, df):
-    """Überschreibt einen spezifischen Monat in der DB (für manuelle Korrekturen)."""
     supabase.table("fahrten").delete().eq("username", username).eq("jahr", jahr).eq("monat", monat).execute()
     clean_insert = []
     for row in df.to_dict('records'):
@@ -191,7 +208,7 @@ def update_month_in_db(username, jahr, monat, df):
         supabase.table("fahrten").insert(clean_insert[i:i+500]).execute()
 
 # ==========================================
-# 2. HELPERS (Aus deinem alten Code)
+# 2. HELPERS
 # ==========================================
 def normalize_col(s: str) -> str:
     if s is None: return ""
@@ -223,7 +240,6 @@ def austria_holidays(year):
     return {date(year, 1, 1), date(year, 1, 6), date(year, 5, 1), date(year, 8, 15), date(year, 10, 26), date(year, 11, 1), date(year, 12, 8), date(year, 12, 25), date(year, 12, 26), E + timedelta(days=1), E + timedelta(days=39), E + timedelta(days=50), E + timedelta(days=60)}
 
 def berechne_taggeld(dauer_minuten, saetze):
-    # saetze ist ein Dictionary mit den Keys: kurz, mittel, lang
     if dauer_minuten < 5 * 60: 
         return f"{saetze.get('kurz', 14.70):.2f}".replace('.', ',')
     if dauer_minuten < 10 * 60: 
@@ -235,35 +251,37 @@ def extrahiere_ort(vollstaendige_adresse):
     part = vollstaendige_adresse.split(',')[-1].strip() if ',' in vollstaendige_adresse else vollstaendige_adresse.strip()
     part_cleaned = re.sub(r'^[A-Za-z]?-?\d{4,5}\s+', '', part)
     return part_cleaned if part_cleaned else part
+
 # ==========================================
-# RED FLAG SCANNER (Plausibilitätsprüfung)
+# RED FLAG SCANNER (KORRIGIERT)
 # ==========================================
 def scan_for_red_flags(df, jahr, monat):
-    """Scannt den Dataframe auf unrealistische Werte und gibt Warnungen zurück."""
     flags = []
     if df.empty: return flags
+    
+    # KORREKTUR: Bessere Erkennung von Ignore-Routes
+    def is_ignore_route(route):
+        route_str = str(route)
+        ignores = ["Keine Fahrt", "Sonntag", "Feiertag", "Urlaub"]
+        return any(route_str == ign or route_str.startswith(ign + ":") or route_str.startswith(ign + " ") for ign in ignores)
     
     for _, row in df.iterrows():
         datum_str = str(row["datum"])
         total_km = int(row.get("km_d", 0)) + int(row.get("km_p", 0))
         
-        # 1. Check: Unrealistische Geschwindigkeit (z.B. 150 km in 20 Minuten -> 450 km/h)
         if total_km > 0:
             try:
                 h, m = map(int, str(row["dauer"]).split(':'))
                 dauer_min = h * 60 + m
                 if dauer_min > 0:
                     geschwindigkeit = (total_km / dauer_min) * 60
-                    if geschwindigkeit > 130: # Höher als 130 km/h Durchschnitt ist verdächtig
+                    if geschwindigkeit > 130:
                         flags.append(f"🚨 {datum_str}: Unrealistische Geschwindigkeit! {total_km} km in {row['dauer']} Std. (~{geschwindigkeit:.0f} km/h).")
             except: pass
             
-        # 2. Check: Fahrt generiert, aber 0 Km eingetragen
-        ignore_routes = ["Keine Fahrt", "Sonntag", "Feiertag", "Urlaub", "Urlaub (Urlaubs-FZ nicht verfügbar)"]
-        if total_km == 0 and str(row["route"]) not in ignore_routes:
+        if total_km == 0 and not is_ignore_route(row["route"]):
             flags.append(f"🚨 {datum_str}: Eine Dienstreise ('{str(row['route'])[:30]}...') wurde eingetragen, aber es stehen 0 km drin!")
             
-        # 3. Check: Ankunft vor Abfahrt (z.B. Abf 17:00, Ank 08:00)
         try:
             abf_h, abf_m = map(int, str(row["abf"]).split(':'))
             ank_h, ank_m = map(int, str(row["ank"]).split(':'))
@@ -273,7 +291,6 @@ def scan_for_red_flags(df, jahr, monat):
                 flags.append(f"🚨 {datum_str}: Ankunft ({row['ank']}) ist vor der Abfahrt ({row['abf']} Uhr) eingetragen!")
         except: pass
 
-    # 4. Check: Doppelte Abfahrtszeiten am selben Tag (nur wenn mehr als 1 Fahrt am Tag)
     for datum, group in df.groupby("datum"):
         if len(group) > 1:
             if group["abf"].nunique() < len(group):
@@ -282,7 +299,7 @@ def scan_for_red_flags(df, jahr, monat):
     return flags
     
 # ==========================================
-# 3. PDF GENERATOREN
+# 3. PDF GENERATOREN (KORRIGIERT)
 # ==========================================
 def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
@@ -293,8 +310,10 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
 
     def footer(canvas, doc):
         canvas.saveState(); page_num = canvas.getPageNumber()
-        footer_text = f"Erstellt von:vbamc34 Seite{page_num}von2 gedruckt:{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
-        canvas.setFont("Helvetica", 9); canvas.drawRightString(A4[0] - 12*mm, 10*mm, footer_text); canvas.restoreState()
+        # KORREKTUR: Variablen Footer statt hardcodiertem "vbamc34"
+        user_name = user_info.get('name', 'Unbekannt')
+        footer_text = f"Erstellt von: {user_name} | Seite {page_num} | Gedruckt: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+        canvas.setFont("Helvetica", 8); canvas.drawRightString(A4[0] - 12*mm, 10*mm, footer_text); canvas.restoreState()
 
     titel_para = Paragraph("Fahrtenbuch Monatsübersicht", styles['Heading2'])
     datum_para = Paragraph(f"{monat_name} {jahr}", styles['Heading2'])
@@ -324,6 +343,9 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     sub_headers = ["", "", "", "", "", "", "dienstl.", "privat", "", ""]
     data = [headers, sub_headers]
     
+    # Taggeld Sätze für den Monat definieren
+    taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+    
     for _, r in df.iterrows():
         dt = pd.to_datetime(r["datum"]); german_day_abbr = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
         tag_name = german_day_abbr[dt.weekday()]; tag = f"{tag_name[:2]}.{dt.day:02d}."
@@ -331,8 +353,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         try:
             dauer_parts = r["dauer"].split(':'); dauer_min = int(dauer_parts[0]) * 60 + int(dauer_parts[1])
         except: dauer_min = 0
-        # NEU: Übergibt die individuellen Sätze an die Funktion
-        taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+        
         data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r["abfahrt_km"]), int(r["km_d"]), int(r["km_p"]), berechne_taggeld(dauer_min, taggeld_saetze), r["fahrzeug"]])
     
     sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
@@ -365,7 +386,9 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     styles = getSampleStyleSheet()
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
-    # FIX 1: Klammer hinzugefügt
+    # KORREKTUR: Taggeld Sätze fürs Jahr definieren
+    taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+
     story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
     story.append(Spacer(1, 8*mm))
 
@@ -374,15 +397,10 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal']))
     story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal']))
     story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal']))
-    
-    # FIX 2: Komplett zerschossene Zeile repariert
     story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", styles['Normal']))
-    
-    # FIX 3: Klammer-Fehler behoben
     story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['Normal']))
     story.append(Spacer(1, 10*mm))
 
-    # FIX 4: Header an Daten angepasst (5 Spalten)
     headers = ["Monat", "gefahrene km", "km-Geld", "Taggeld"]
     sub_headers = ["", "dienstl.", "privat", "EUR", "EUR"]
     data = [headers, sub_headers]
@@ -402,16 +420,16 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 
             sum_dienstl = int(df["km_d"].sum())
             sum_privat = int(df["km_p"].sum())
-            sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
+            
+            # KORREKTUR: taggeld_saetze wird jetzt übergeben!
+            sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
+            
             total_dienstl += sum_dienstl
             total_privat += sum_privat 
-            
-            # FIX 5: Der ** Operator wurde durch ein + ersetzt und Variable korrigiert
             total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
             total_taggeld += sum_taggeld
             data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
         
-    # FIX 6: Summen-Zeile aus der Schleife herausgezogen
     data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
     
     col_widths = [30*mm, 25*mm, 25*mm, 30*mm, 30*mm]
@@ -424,14 +442,15 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), 
-        ("SPAN", (1, 0), (2, 0)), # Passt zu "gefahrene km"
+        ("SPAN", (1, 0), (2, 0)),
         ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)
     ])
     table.setStyle(style)
     story.append(table)
     story.append(Spacer(1, 20*mm))
 
-    # --- Fahrzeugübersicht (nur Dienst-KM) am Ende des Berichts ---
+    # --- Fahrzeugübersicht ---
+    # KORREKTUR: Die fehlerhafte Zeile `fahrzeuge_df = st.session_state['fahrzeuge_df']` wurde gelöscht!
     vehicle_km_summary = {}
     for month_key, month_data in generated_data.items():
         df = month_data['data']
@@ -443,7 +462,6 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
                 vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
                 vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
 
-    fahrzeuge_df = st.session_state['fahrzeuge_df']
     headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
     data = [headers]
     total_km_d = 0
@@ -460,7 +478,6 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     col_widths = [33*mm, 20*mm, 20*mm]
     vehicle_table = Table(data, colWidths=col_widths)
     
-    # FIX 7: Abgebrochenen TableStyle repariert und geschlossen
     vehicle_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -494,7 +511,6 @@ if not st.session_state['logged_in']:
         if st.button("Login", type="primary"):
             success, user_data = verify_user(user, pw)
             if success:
-                # PRÜFUNG: Muss der User sein Passwort ändern?
                 if user_data.get('force_pw_change', False):
                     st.session_state['temp_user_data'] = user_data
                     st.session_state['force_pw_change_flow'] = True
@@ -506,7 +522,6 @@ if not st.session_state['logged_in']:
             else:
                 st.error("Falsche Zugangsdaten")
 
-    # --- ZWANGS-PASSWORT-ÄNDERUNG (Pop-up nach Login) ---
     if st.session_state.get('force_pw_change_flow', False):
         st.warning("🔑 Sicherheitshinweis: Sie müssen Ihr Passwort vor der ersten Nutzung ändern!")
         with st.form("force_change_form"):
@@ -521,7 +536,6 @@ if not st.session_state['logged_in']:
                 else:
                     temp_user = st.session_state.get('temp_user_data')
                     hashed_new_pw = hashlib.sha256(new_pw_1.encode()).hexdigest()
-                    # Passwort aktualisieren und Flag entfernen
                     supabase.table("users").update({"password": hashed_new_pw, "force_pw_change": False}).eq("username", temp_user['username']).execute()
                     st.session_state['force_pw_change_flow'] = False
                     st.session_state['temp_user_data'] = None
@@ -529,11 +543,11 @@ if not st.session_state['logged_in']:
                     st.session_state['username'] = temp_user['username']
                     st.success("Passwort erfolgreich geändert! Willkommen.")
                     st.rerun()
-        st.stop() # Verhindert, dass die normale App lädt, bevor er das PW geändert hat
+        st.stop()
 
     with tab2:
         new_user = st.text_input("Neuer Benutzername", key="reg_user")
-        new_email = st.text_input("Ihre E-Mail-Adresse", key="reg_email") # NEU
+        new_email = st.text_input("Ihre E-Mail-Adresse", key="reg_email")
         new_pw = st.text_input("Neues Passwort", type="password", key="reg_pw")
         if st.button("Account erstellen"):
             if not new_email or "@" not in new_email:
@@ -549,7 +563,6 @@ if not st.session_state['logged_in']:
         if st.button("🔄 Neues Passwort anfordern"):
             if reset_user:
                 clean_user = reset_user.strip().lower()
-                # 1. User und E-Mail in der DB suchen
                 db_user = supabase.table("users").select("username, email").eq("username", clean_user).execute()
                 if not db_user.data:
                     st.error("Benutzername nicht gefunden.")
@@ -557,14 +570,9 @@ if not st.session_state['logged_in']:
                     st.error("Für diesen Account ist keine E-Mail hinterlegt. Bitte wenden Sie sich an den Administrator.")
                 else:
                     user_email = db_user.data[0]['email']
-                    # 2. Sicheres Passwort generieren
-                    new_plain_pw = secrets.token_urlsafe(8) # Erzeugt z.B. 'xK9mP2qL'
+                    new_plain_pw = secrets.token_urlsafe(8)
                     hashed_pw = hashlib.sha256(new_plain_pw.encode()).hexdigest()
-                    
-                    # 3. In DB speichern und "Zwang zum Ändern" setzen
                     supabase.table("users").update({"password": hashed_pw, "force_pw_change": True}).eq("username", clean_user).execute()
-                    
-                    # 4. E-Mail verschicken
                     if send_reset_email(user_email, new_plain_pw):
                         st.success("Ein neues Passwort wurde an Ihre E-Mail-Adresse gesendet! Bitte prüfen Sie auch Ihren Spam-Ordner.")
                     else:
@@ -597,15 +605,11 @@ with st.sidebar:
     user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', ''))
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
     
-    # --- NEU: Finanzwerte einstellbar machen ---
     st.markdown("**💰 Finanzielle Eckwerte (Sätze anpassen):**")
-    
-    # Wenn die Werte noch nicht in der DB sind, nimm die BMF 2024 Sätze als Standard
     user_info['taggeld_kurz'] = st.number_input("Taggeld < 5 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_kurz', 14.70)), step=0.10, format="%.2f")
     user_info['taggeld_mittel'] = st.number_input("Taggeld 5 - 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_mittel', 29.40)), step=0.10, format="%.2f")
     user_info['taggeld_lang'] = st.number_input("Taggeld > 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_lang', 29.40)), step=0.10, format="%.2f")
     user_info['km_geld'] = st.number_input("Kilometergeld PKW amtlich (EUR)", 0.0, 2.0, float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
-    # --- ENDE NEU ---
 
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
     if st.button("💾 Stammdaten speichern"): save_settings(user, user_info); st.toast("Gespeichert!")
@@ -736,18 +740,20 @@ if gen_btn:
     fahrzeug_optionen = {row['bezeichnung']: row['id'] for _, row in fahrzeuge_df.iterrows()}
     vacation_days = set()
     anzahl_wochen = st.session_state.get('anzahl_urlaubswochen', 0)
+    
+    # KORREKTUR: Urlaubsberechnung mit korrekten Tagen (7 statt 6)
     if anzahl_wochen > 0:
         verteilung = st.session_state.get('verteilung_urlaub', '4x1 Woche'); start_woche_1_global = st.session_state.get('start_woche_1', date(jahr, 4, 1)); start_woche_1 = date(jahr, start_woche_1_global.month, start_woche_1_global.day)
         if verteilung == "1x4 Wochen":
-            for j in range(4 * 6): vacation_days.add(start_woche_1 + timedelta(days=j))
+            for j in range(4 * 7): vacation_days.add(start_woche_1 + timedelta(days=j))
         elif verteilung == "2x2 Wochen":
             for i in range(2):
-                block_start_date = start_woche_1 + timedelta(weeks=int(i * 26))
-                for j in range(2 * 6): vacation_days.add(block_start_date + timedelta(days=j))
+                block_start_date = start_woche_1 + timedelta(weeks=i * 26)
+                for j in range(2 * 7): vacation_days.add(block_start_date + timedelta(days=j))
         elif verteilung == "4x1 Woche":
             for i in range(4):
-                block_start_date = start_woche_1 + timedelta(weeks=int(i * 13))
-                for j in range(1 * 6): vacation_days.add(block_start_date + timedelta(days=j))
+                block_start_date = start_woche_1 + timedelta(weeks=i * 13)
+                for j in range(7): vacation_days.add(block_start_date + timedelta(days=j))
 
     monate_zum_generieren = list(range(1, 13)) if modus == "Ganzes Jahr" else [monat]
     progress_bar = st.progress(0, text="Generiere Fahrten...")
@@ -814,27 +820,19 @@ if gen_btn:
             else:
                 current_week = t.isocalendar()[1]; target_day_for_tour = 0 if current_week % 2 == 1 else 1
                 
-                # --- GROSSE TOUR ---
                 if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
                     special_trip_done_this_week = True; km_p = int(user_info.get('entfernung', 25)); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
                     num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
                     for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
                     route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
                     
-                    # NEU: Start fest um 08:00 Uhr
                     start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    
-                    # NEU: Ende zufällig zwischen 17:00 und 22:00 Uhr
-                    end_hour = int(rng.integers(17, 23)) 
-                    end_minute = int(rng.integers(0, 60))
+                    end_hour = int(rng.integers(17, 23)); end_minute = int(rng.integers(0, 60))
                     ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
-                    
-                    # Dauer aus Differenz berechnen (Gesamter Tag abgedeckt)
                     dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
                     
-                # --- NORMALE DIENSTFAHRT ---
                 elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
                     prob = wahrscheinlichkeit_dienstfahrt_werktag
                     if prob >= 90: num_stops = rng.integers(1, 3)
@@ -844,30 +842,24 @@ if gen_btn:
                     selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
                     km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
                     
-                    # NEU: Start fest um 08:00 Uhr
                     start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    
-                    # NEU: Ende zufällig zwischen 17:00 und 22:00 Uhr
-                    end_hour = int(rng.integers(17, 23)) 
-                    end_minute = int(rng.integers(0, 60))
+                    end_hour = int(rng.integers(17, 23)); end_minute = int(rng.integers(0, 60))
                     ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
-                    
-                    # Dauer aus Differenz berechnen (Gesamter Tag abgedeckt)
                     dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
 
-            abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
-                
-
+            # KORREKTUR: Doppelte Zeile entfernt
             abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
             out.append({"datum": t.date(), "fahrzeug_id": fahrzeug_id, "fahrzeug": fahrzeug_name, "route": route, "km_d": km_d, "km_p": km_p, "abf": abf, "ank": ank, "dauer": dauer, "abfahrt_km": abfahrt_km})
             if fahrzeug_id is not None and (km_d > 0 or km_p > 0): current_km[fahrzeug_id] += km_d + km_p
 
         df = pd.DataFrame(out).sort_values(["datum"]).reset_index(drop=True)
+        
+        # KORREKTUR: Division durch Null verhindert
         if not df.empty and target_km_max > 0:
             current_km_d_total = df["km_d"].sum()
-            if not (target_km_min <= current_km_d_total <= target_km_max):
+            if current_km_d_total > 0 and not (target_km_min <= current_km_d_total <= target_km_max):
                 target_km = (target_km_min + target_km_max) / 2; scaling_factor = target_km / current_km_d_total
                 df['km_d'] = df.apply(lambda row: int(row['km_d'] * scaling_factor) if row['km_d'] > 0 else 0, axis=1)
                 month_start_km = {fz_id: km - df[df['fahrzeug_id'] == fz_id][['km_d', 'km_p']].sum().sum() for fz_id, km in current_km.items()}
@@ -879,9 +871,6 @@ if gen_btn:
                 df = pd.DataFrame(corrected_rows)
                 for fz_id, km in month_start_km.items(): current_km[fz_id] = km
 
-        # FIX 8: RIESIGER LOGIK-FEHLER BEHOBEN. 
-        # Diese Zeile war vorher tief eingerückt und wurde nur bei Skalierung ausgeführt!
-        # Jetzt wird der Monat IMMER gespeichert.
         st.session_state["generated_months_data"][(jahr, monat_key)] = {"data": df, "end_km": max(current_km.values()) if current_km else 0}
 
     progress_bar.empty()
@@ -895,19 +884,14 @@ if gen_btn:
 # ========= Anzeige, Bearbeitung & PDF =========
 df = st.session_state.get("fahrten_df")
 if df is not None:
-    
-    # --- NEU: RED FLAG SCANNER AUSFÜHREN ---
-    # Wir scannen immer den aktuell angezeigten Monat
     red_flags = scan_for_red_flags(df, jahr, monat)
     if red_flags:
         st.error("⚠️ Plausibilitätsprüfung fehlgeschlagen! Bitte korrigiere folgende Fehler im Fahrtenbuch, bevor du das PDF exportierst:")
         for flag in red_flags:
             st.warning(flag)
         st.markdown("---")
-    # --- ENDE SCANNER ---
 
     st.subheader("✏️ Fahrten anpassen & manuell hinzufügen")
-    
     edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True, key="edit_fahrten_editor")
     
     col_save, col_add = st.columns([1, 1])
@@ -1124,19 +1108,18 @@ if user in ADMIN_USERS:
             selected_user = st.selectbox("User auswählen", all_users, key="admin_user_select")
             new_pw = st.text_input("Neues Passwort für diesen User", type="password", key="admin_pw_reset")
             
+            # KORREKTUR: Setzt nun force_pw_change Flag
             if st.button("🔐 Passwort jetzt ändern"):
                 if new_pw:
                     hashed_pw = hashlib.sha256(new_pw.encode()).hexdigest()
-                    supabase.table("users").update({"password": hashed_pw}).eq("username", selected_user).execute()
-                    st.success(f"Passwort für **{selected_user}** wurde erfolgreich geändert! Er kann sich sofort damit einloggen.")
+                    supabase.table("users").update({"password": hashed_pw, "force_pw_change": True}).eq("username", selected_user).execute()
+                    st.success(f"Passwort für **{selected_user}** wurde geändert. User muss bei nächstem Login ein neues Passwort setzen.")
                 else:
                     st.warning("Bitte gib ein neues Passwort ein.")
             
             st.markdown("---")
             
-            # --- NEU: E-Mail Adresse pflegen ---
             st.subheader("📧 E-Mail-Adresse verwalten (für Passwort-Reset)")
-            # Lade die aktuelle E-Mail des Users aus der 'users' Tabelle (nicht aus 'settings')
             user_account_info = supabase.table("users").select("username, email").eq("username", selected_user).execute()
             current_email = user_account_info.data[0].get('email', '') if user_account_info.data else ''
             
