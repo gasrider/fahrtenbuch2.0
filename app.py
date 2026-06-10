@@ -50,17 +50,22 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def add_user(username, password):
+def add_user(username, password, email):
     clean_username = username.strip().lower()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    try: supabase.table("users").insert({"username": clean_username, "password": hashed_pw}).execute(); return True
+    try: 
+        supabase.table("users").insert({"username": clean_username, "password": hashed_pw, "email": email.strip().lower(), "force_pw_change": False}).execute()
+        return True
     except: return False
 
 def verify_user(username, password):
     clean_username = username.strip().lower()
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-    response = supabase.table("users").select("*").eq("username", clean_username).eq("password", hashed_pw).execute()
-    return len(response.data) > 0
+    # WICHTIG: Wir holen jetzt auch die E-Mail und den force_pw_change Status ab
+    response = supabase.table("users").select("username, password, email, force_pw_change").eq("username", clean_username).eq("password", hashed_pw).execute()
+    if len(response.data) > 0:
+        return True, response.data[0] # Gibt True und die User-Daten zurück
+    return False, {}
 
 def save_settings(username, data_dict):
     supabase.table("settings").upsert({"username": username, "name": data_dict.get('name',''), "pnr": data_dict.get('pnr',''), "wohnort": data_dict.get('wohnort',''), "dienstort": data_dict.get('dienstort',''), "entfernung": data_dict.get('entfernung',0)}).execute()
