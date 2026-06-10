@@ -68,7 +68,19 @@ def verify_user(username, password):
     return False, {}
 
 def save_settings(username, data_dict):
-    supabase.table("settings").upsert({"username": username, "name": data_dict.get('name',''), "pnr": data_dict.get('pnr',''), "wohnort": data_dict.get('wohnort',''), "dienstort": data_dict.get('dienstort',''), "entfernung": data_dict.get('entfernung',0)}).execute()
+    supabase.table("settings").upsert({
+        "username": username, 
+        "name": data_dict.get('name',''), 
+        "pnr": data_dict.get('pnr',''), 
+        "wohnort": data_dict.get('wohnort',''), 
+        "dienstort": data_dict.get('dienstort',''), 
+        "entfernung": data_dict.get('entfernung', 0),
+        # --- NEU: Finanzwerte ---
+        "taggeld_kurz": data_dict.get('taggeld_kurz', 14.70),
+        "taggeld_mittel": data_dict.get('taggeld_mittel', 29.40),
+        "taggeld_lang": data_dict.get('taggeld_lang', 29.40),
+        "km_geld": data_dict.get('km_geld', 0.42)
+    }).execute()
 
 def load_settings(username):
     response = supabase.table("settings").select("*").eq("username", username).execute()
@@ -210,10 +222,13 @@ def austria_holidays(year):
     E = easter_sunday(year)
     return {date(year, 1, 1), date(year, 1, 6), date(year, 5, 1), date(year, 8, 15), date(year, 10, 26), date(year, 11, 1), date(year, 12, 8), date(year, 12, 25), date(year, 12, 26), E + timedelta(days=1), E + timedelta(days=39), E + timedelta(days=50), E + timedelta(days=60)}
 
-def berechne_taggeld(dauer_minuten):
-    if dauer_minuten < 5 * 60: return "11,00"
-    if dauer_minuten < 10 * 60: return "22,00"
-    return "26,40"
+def berechne_taggeld(dauer_minuten, saetze):
+    # saetze ist ein Dictionary mit den Keys: kurz, mittel, lang
+    if dauer_minuten < 5 * 60: 
+        return f"{saetze.get('kurz', 14.70):.2f}".replace('.', ',')
+    if dauer_minuten < 10 * 60: 
+        return f"{saetze.get('mittel', 29.40):.2f}".replace('.', ',')
+    return f"{saetze.get('lang', 29.40):.2f}".replace('.', ',')
 
 def extrahiere_ort(vollstaendige_adresse):
     if not vollstaendige_adresse: return "Unbekannt"
@@ -271,10 +286,12 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         try:
             dauer_parts = r["dauer"].split(':'); dauer_min = int(dauer_parts[0]) * 60 + int(dauer_parts[1])
         except: dauer_min = 0
-        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r["abfahrt_km"]), int(r["km_d"]), int(r["km_p"]), berechne_taggeld(dauer_min), r["fahrzeug"]])
+        # NEU: Übergibt die individuellen Sätze an die Funktion
+        taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r["abfahrt_km"]), int(r["km_d"]), int(r["km_p"]), berechne_taggeld(dauer_min, taggeld_saetze), r["fahrzeug"]])
     
     sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
-    sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1])).replace(',', '.')) for _, r in df.iterrows())
+    sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
     data.append(["Einzelsummen:", "", "", "", "", "", sum_dienstl, sum_privat, f"{sum_taggeld:.2f}".replace('.', ','), ""])
     
     col_widths = [12*mm, 10*mm, 10*mm, 12*mm, 71*mm, 15*mm, 15*mm, 15*mm, 12*mm, 18*mm]
@@ -289,7 +306,10 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     ])
     table.setStyle(style); story.append(table); story.append(Spacer(1, 5*mm))
     
-    notes = ["Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.", "Monatliches KM-Maximum dienstlich ab 01.01.2023 0,00 km", "km-Geld Satz PKW amtlich ab 01.01.2023 EUR 0,42", "km-Geld Satz PKW dienstlich ab 01.01.2023 EUR 0,00"]
+    km_satz = float(user_info.get('km_geld', 0.42))
+    notes = [
+        "Privat-KM beinhalten die Fahrtstrecke Wohnung-Arbeitsplatz.", 
+        f"km-Geld Satz PKW amtlich: EUR {km_satz:.2f}".replace('.', ',')]
     for note in notes: story.append(Paragraph(note, styles['Normal'])); story.append(Spacer(1, 3*mm))
     doc.build(story, onFirstPage=footer, onLaterPages=footer); buf.seek(0); return buf
 
@@ -531,6 +551,17 @@ with st.sidebar:
     user_info['wohnort'] = st.text_input("Wohnort", user_info.get('wohnort', ''))
     user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', ''))
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
+    
+    # --- NEU: Finanzwerte einstellbar machen ---
+    st.markdown("**💰 Finanzielle Eckwerte (Sätze anpassen):**")
+    
+    # Wenn die Werte noch nicht in der DB sind, nimm die BMF 2024 Sätze als Standard
+    user_info['taggeld_kurz'] = st.number_input("Taggeld < 5 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_kurz', 14.70)), step=0.10, format="%.2f")
+    user_info['taggeld_mittel'] = st.number_input("Taggeld 5 - 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_mittel', 29.40)), step=0.10, format="%.2f")
+    user_info['taggeld_lang'] = st.number_input("Taggeld > 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_lang', 29.40)), step=0.10, format="%.2f")
+    user_info['km_geld'] = st.number_input("Kilometergeld PKW amtlich (EUR)", 0.0, 2.0, float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
+    # --- ENDE NEU ---
+
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
     if st.button("💾 Stammdaten speichern"): save_settings(user, user_info); st.toast("Gespeichert!")
 
