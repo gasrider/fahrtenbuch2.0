@@ -1022,6 +1022,23 @@ if user in ADMIN_USERS:
                 else:
                     st.warning("Bitte gib ein neues Passwort ein.")
             
+                       st.markdown("---")
+            
+            # --- NEU: E-Mail Adresse pflegen ---
+            st.subheader("📧 E-Mail-Adresse verwalten (für Passwort-Reset)")
+            # Lade die aktuelle E-Mail des Users aus der 'users' Tabelle (nicht aus 'settings')
+            user_account_info = supabase.table("users").select("username, email").eq("username", selected_user).execute()
+            current_email = user_account_info.data[0].get('email', '') if user_account_info.data else ''
+            
+            new_email = st.text_input("E-Mail-Adresse eintragen/ändern", value=current_email, key="admin_email_input")
+            if st.button("💾 E-Mail speichern"):
+                if new_email and "@" in new_email:
+                    supabase.table("users").update({"email": new_email.strip().lower()}).eq("username", selected_user).execute()
+                    st.success(f"E-Mail-Adresse für **{selected_user}** wurde erfolgreich gespeichert! Er kann nun sein Passwort selbst zurücksetzen.")
+                    st.rerun()
+                else:
+                    st.error("Bitte gib eine gültige E-Mail-Adresse ein (muss ein @ enthalten).")
+
             st.markdown("---")
             st.subheader(f"📁 Daten von {selected_user} ansehen")
             
