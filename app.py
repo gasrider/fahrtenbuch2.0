@@ -16,10 +16,10 @@ import os
 
 def send_reset_email(to_email, new_plain_password):
     try:
-        smtp_server = os.environ.get("SMTP_SERVER") # z.B. mail.gmx.net
-        smtp_port = os.environ.get("SMTP_PORT")     # ZWINGEND 465 für GMX SSL!
-        smtp_user = os.environ.get("SMTP_USER")     # z.B. dein.name@gmx.at
-        smtp_password = os.environ.get("SMTP_PASSWORD") # WICHTIG: App-Passwort nutzen!
+        smtp_server = os.environ.get("mail.gmx.net") # z.B. mail.gmx.net
+        smtp_port = os.environ.get("465")     # ZWINGEND 465 für GMX SSL!
+        smtp_user = os.environ.get("gasrider.low@gmx.at")     # z.B. dein.name@gmx.at
+        smtp_password = os.environ.get("XAI5FTLDA5VSJ6TKDCRJ") # WICHTIG: App-Passwort nutzen!
 
         if not all([smtp_server, smtp_port, smtp_user, smtp_password]):
             print("Fehler: SMTP Umgebungsvariablen nicht vollständig gesetzt")
