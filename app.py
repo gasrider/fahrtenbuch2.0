@@ -445,12 +445,12 @@ if gen_btn:
     if verteilung=="1x4 Wochen":
             for j in range(4*7):
                 vacation_days.add(sw1+timedelta(days=j))
-        elif verteilung=="2x2 Wochen":
+            elif verteilung=="2x2 Wochen":
             for i in range(2):
                 bsd = sw1+timedelta(weeks=i*26)
                 for j in range(2*7):
                     vacation_days.add(bsd+timedelta(days=j))
-        elif verteilung=="4x1 Woche":
+            elif verteilung=="4x1 Woche":
             for i in range(4):
                 bsd = sw1+timedelta(weeks=i*13)
                 for j in range(7):
