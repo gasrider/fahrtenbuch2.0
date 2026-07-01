@@ -11,47 +11,70 @@ import hashlib
 import secrets
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
+import os
 
-# --- NEU: E-Mail Versand Funktion (KORRIGIERT) ---
 def send_reset_email(to_email, new_plain_password):
     try:
-        smtp_server = os.environ.get("SMTP_SERVER")
-        smtp_port = os.environ.get("SMTP_PORT")
-        smtp_user = os.environ.get("SMTP_USER")
-        smtp_password = os.environ.get("SMTP_PASSWORD")
-        
+        smtp_server = os.environ.get("SMTP_SERVER") # z.B. mail.gmx.net
+        smtp_port = os.environ.get("SMTP_PORT")     # ZWINGEND 465 für GMX SSL!
+        smtp_user = os.environ.get("SMTP_USER")     # z.B. dein.name@gmx.at
+        smtp_password = os.environ.get("SMTP_PASSWORD") # WICHTIG: App-Passwort nutzen!
+
         if not all([smtp_server, smtp_port, smtp_user, smtp_password]):
             print("Fehler: SMTP Umgebungsvariablen nicht vollständig gesetzt")
             return False
 
         msg = EmailMessage()
-        msg.set_content(f"Hallo,\n\nSie haben ein neues Passwort für das Fahrtenbuch-System angefordert.\n\nIhr neues Passwort lautet: {new_plain_password}\n\nBitte loggen Sie sich ein. Sie werden direkt aufgefordert, dieses Passwort sofort durch ein eigenes zu ersetzen.\n\nViele Grüße\nIhr Admin-Team")
-        msg['Subject'] = "Ihr neues Passwort für das Fahrtenbuch"
-        msg['From'] = smtp_user
+        
+        # 1. GMX mag es, wenn der Absender korrekt formatiert ist (Name + E-Mail)
+        msg['From'] = formataddr(("Fahrtenbuch System", smtp_user))
         msg['To'] = to_email
+        msg['Subject'] = "Ihr neues Passwort für das Fahrtenbuch"
+        
+        # 2. WICHTIG: Eine Message-ID generieren. GMX blockiert Mails oft ohne diese.
+        domain = smtp_user.split('@')[1]
+        msg['Message-ID'] = make_msgid(domain=domain)
+        
+        # 3. Optional: Priority Header (manchmal hilft das bei GMX)
+        msg['X-Priority'] = '1'
 
-        with smtplib.SMTP(smtp_server, int(smtp_port)) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_password)
-            server.send_message(msg)
+        # 4. Text als sauberes Plain-Text setzen (GMX mag kein kompliziertes HTML bei unbekannten Absendern)
+        text = f"""Hallo,
+
+Sie haben ein neues Passwort für das Fahrtenbuch-System angefordert.
+
+Ihr neues Passwort lautet: {new_plain_password}
+
+Bitte loggen Sie sich ein. Sie werden direkt aufgefordert, dieses Passwort sofort durch ein eigenes zu ersetzen.
+
+Viele Grüße
+Ihr Admin-Team"""
+        
+        msg.set_content(text, subtype='plain', charset='utf-8')
+
+        # 5. GMX VERBINDUNG: Port 465 verlangt SMTP_SSL, NICHT SMTP + starttls()!
+        if int(smtp_port) == 465:
+            with smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=10) as server:
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+        else:
+            # Fallback für Port 587 (falls du den nutzt)
+            with smtplib.SMTP(smtp_server, int(smtp_port), timeout=10) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+                
         return True
+        
+    except smtplib.SMTPAuthenticationError:
+        print("GMX Login fehlgeschlagen! Nutzt du ein GMX App-Passwort?")
+        return False
     except Exception as e:
         print(f"Fehler beim E-Mail Versand: {e}")
         return False
-
-from supabase import create_client, Client
-
-# ---- PDF deps ----
-try:
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.lib import colors
-    from reportlab.platypus import Table, TableStyle, Paragraph, SimpleDocTemplate, Spacer
-    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-    REPORTLAB_OK = True
-except Exception as e:
-    st.error(f"ReportLab konnte nicht geladen werden: {e}")
-    REPORTLAB_OK = False
 
 # ==========================================
 # 1. SUPABASE DATENBANK-SCHICHT (KORRIGIERT)
