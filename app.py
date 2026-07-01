@@ -442,7 +442,7 @@ if gen_btn:
     anzahl_wochen=st.session_state.get('anz_url',0)
     if anzahl_wochen>0:
         verteilung=st.session_state.get('vert_url','4x1 Woche'); sw1g=st.session_state.get('start_w1',date(jahr,4,1)); sw1=date(jahr,sw1g.month,sw1g.day)
-            if verteilung=="1x4 Wochen":
+    if verteilung=="1x4 Wochen":
             for j in range(4*7):
                 vacation_days.add(sw1+timedelta(days=j))
         elif verteilung=="2x2 Wochen":
