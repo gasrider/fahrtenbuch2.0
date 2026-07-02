@@ -878,8 +878,8 @@ if gen_btn:
 
         for t in tage:
             route = "Keine Fahrt"; km_d = 0; km_p = 0; abf = "00:00"; ank = "00:00"; dauer = "00:00"; fahrzeug_id = None; fahrzeug_name = "Kein Fahrzeug"
-            tag_ts = pd.Timestamp(t.date())
-            gueltige_fahrzeuge_am_tag = pd.to_numeric(zeitraeume_df[(zeitraeume_df["von"] <= tag_ts) & (zeitraeume_df["bis"] >= tag_ts)]["fahrzeug_id"], errors="coerce").dropna().astype(int).tolist()
+            tag_str = t.strftime("%Y-%m-%d")
+            gueltige_fahrzeuge_am_tag = pd.to_numeric(zeitraeume_df[(zeitraeume_df["von"] <= tag_str) & (zeitraeume_df["bis"] >= tag_str)]["fahrzeug_id"], errors="coerce").dropna().astype(int).tolist()
             if gueltige_fahrzeuge_am_tag: fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag); fahrzeug_name = fahrzeuge_df[fahrzeuge_df["id"] == fahrzeug_id]["bezeichnung"].values[0]
             if t.weekday() == 0: special_trip_done_this_week = False
             is_saturday = t.weekday() == 5; is_sunday = t.weekday() == 6; is_holiday = t.date() in hol; is_vacation = (t.date() in vacation_days)
