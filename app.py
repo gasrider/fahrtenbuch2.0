@@ -128,9 +128,11 @@ def save_settings(username, data_dict):
         "wohnort": data_dict.get('wohnort',''), 
         "dienstort": data_dict.get('dienstort',''), 
         "entfernung": data_dict.get('entfernung', 0),
-        "taggeld_kurz": data_dict.get('taggeld_kurz', 14.70),
-        "taggeld_mittel": data_dict.get('taggeld_mittel', 29.40),
-        "taggeld_lang": data_dict.get('taggeld_lang', 29.40),
+        "taggeld_min_stunden": data_dict.get('taggeld_min_stunden', 5),
+        "taggeld_basis": data_dict.get('taggeld_basis', 10.00),
+        "taggeld_stufung": data_dict.get('taggeld_stufung', 2.50),
+        "taggeld_max_betrag": data_dict.get('taggeld_max_betrag', 30.00),
+        "taggeld_max_stunden": data_dict.get('taggeld_max_stunden', 13),
         "km_geld": data_dict.get('km_geld', 0.42)
     }).execute()
 
@@ -356,12 +358,29 @@ def _safe_dauer_min(dauer_val):
     except (ValueError, IndexError, TypeError, AttributeError):
         return 0
 
-def berechne_taggeld(dauer_minuten, saetze):
-    if dauer_minuten < 5 * 60: 
-        return f"{saetze.get('kurz', 14.70):.2f}".replace('.', ',')
-    if dauer_minuten < 10 * 60: 
-        return f"{saetze.get('mittel', 29.40):.2f}".replace('.', ',')
-    return f"{saetze.get('lang', 29.40):.2f}".replace('.', ',')
+def berechne_taggeld(dauer_minuten, params):
+    """Berechnet das Taggeld linear:
+    - Unter min_stunden: 0 EUR
+    - Ab min_stunden: basis EUR
+    - Jede weitere Stunde: +stufung EUR (anteilig)
+    - Ab max_stunden: max_betrag EUR (gedeckelt)
+
+    params: {min_stunden, basis, stufung, max_betrag, max_stunden}
+    """
+    min_st = params.get('min_stunden', 5)
+    basis = params.get('basis', 10.00)
+    stufung = params.get('stufung', 2.50)
+    max_betrag = params.get('max_betrag', 30.00)
+    max_st = params.get('max_stunden', 13)
+
+    stunden = dauer_minuten / 60.0
+    if stunden < min_st:
+        return "0,00"
+    if stunden >= max_st:
+        return f"{max_betrag:.2f}".replace('.', ',')
+    betrag = basis + (stunden - min_st) * stufung
+    betrag = min(betrag, max_betrag)
+    return f"{betrag:.2f}".replace('.', ',')
 
 def extrahiere_ort(vollstaendige_adresse):
     if not vollstaendige_adresse: return "Unbekannt"
@@ -459,8 +478,14 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
     sub_headers = ["", "", "", "", "", "", "dienstl.", "privat", "", ""]
     data = [headers, sub_headers]
     
-    # Taggeld Sätze für den Monat definieren
-    taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+    # Taggeld-Parameter für den Monat definieren
+    taggeld_params = {
+        'min_stunden': user_info.get('taggeld_min_stunden', 5),
+        'basis': user_info.get('taggeld_basis', 10.00),
+        'stufung': user_info.get('taggeld_stufung', 2.50),
+        'max_betrag': user_info.get('taggeld_max_betrag', 30.00),
+        'max_stunden': user_info.get('taggeld_max_stunden', 13),
+    }
     
     for _, r in df.iterrows():
         dt = pd.to_datetime(r["datum"]); german_day_abbr = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
@@ -468,10 +493,10 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         route_para = Paragraph(str(r["route"]), wrap_style)
         dauer_min = _safe_dauer_min(r["dauer"])
         
-        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r.get("abfahrt_km", 0) or 0), int(r.get("km_d", 0) or 0), int(r.get("km_p", 0) or 0), berechne_taggeld(dauer_min, taggeld_saetze), r.get("fahrzeug", "")])
+        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r.get("abfahrt_km", 0) or 0), int(r.get("km_d", 0) or 0), int(r.get("km_p", 0) or 0), berechne_taggeld(dauer_min, taggeld_params), r.get("fahrzeug", "")])
     
     sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
-    sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
+    sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_params).replace(',', '.')) for _, r in df.iterrows())
     data.append(["Einzelsummen:", "", "", "", "", "", sum_dienstl, sum_privat, f"{sum_taggeld:.2f}".replace('.', ','), ""])
     
     col_widths = [12*mm, 10*mm, 10*mm, 12*mm, 71*mm, 15*mm, 15*mm, 15*mm, 12*mm, 18*mm]
@@ -500,8 +525,14 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     styles = getSampleStyleSheet()
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
-    # KORREKTUR: Taggeld Sätze fürs Jahr definieren
-    taggeld_saetze = {"kurz": user_info.get('taggeld_kurz', 14.70), "mittel": user_info.get('taggeld_mittel', 29.40), "lang": user_info.get('taggeld_lang', 29.40)}
+    # Taggeld-Parameter fürs Jahr definieren
+    taggeld_params = {
+        'min_stunden': user_info.get('taggeld_min_stunden', 5),
+        'basis': user_info.get('taggeld_basis', 10.00),
+        'stufung': user_info.get('taggeld_stufung', 2.50),
+        'max_betrag': user_info.get('taggeld_max_betrag', 30.00),
+        'max_stunden': user_info.get('taggeld_max_stunden', 13),
+    }
 
     story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
     story.append(Spacer(1, 8*mm))
@@ -535,8 +566,8 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
             sum_dienstl = int(df["km_d"].sum())
             sum_privat = int(df["km_p"].sum())
             
-            # KORREKTUR: taggeld_saetze wird jetzt übergeben!
-            sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
+            # Taggeld linear berechnen
+            sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_params).replace(',', '.')) for _, r in df.iterrows())
             
             total_dienstl += sum_dienstl
             total_privat += sum_privat 
@@ -720,9 +751,26 @@ with st.sidebar:
     user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
     
     st.markdown("**💰 Finanzielle Eckwerte (Sätze anpassen):**")
-    user_info['taggeld_kurz'] = st.number_input("Taggeld < 5 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_kurz', 14.70)), step=0.10, format="%.2f")
-    user_info['taggeld_mittel'] = st.number_input("Taggeld 5 - 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_mittel', 29.40)), step=0.10, format="%.2f")
-    user_info['taggeld_lang'] = st.number_input("Taggeld > 10 Stunden (EUR)", 0.0, 50.0, float(user_info.get('taggeld_lang', 29.40)), step=0.10, format="%.2f")
+    st.caption("Taggeld linear: ab Mindeststunden Basis-Betrag, pro weitere Stunde +Stufung, gedeckelt bei Max.")
+    tg_c1, tg_c2 = st.columns(2)
+    with tg_c1:
+        user_info['taggeld_min_stunden'] = st.number_input("Taggeld ab Std. (Mindestdauer)", 1.0, 12.0, float(user_info.get('taggeld_min_stunden', 5)), step=0.5, format="%.1f")
+        user_info['taggeld_basis'] = st.number_input("Taggeld Basis-Betrag (EUR)", 0.0, 50.0, float(user_info.get('taggeld_basis', 10.00)), step=0.50, format="%.2f")
+        user_info['taggeld_stufung'] = st.number_input("Zuschlag pro weitere Stunde (EUR)", 0.0, 20.0, float(user_info.get('taggeld_stufung', 2.50)), step=0.10, format="%.2f")
+    with tg_c2:
+        user_info['taggeld_max_betrag'] = st.number_input("Taggeld Maximalbetrag (EUR)", 0.0, 100.0, float(user_info.get('taggeld_max_betrag', 30.00)), step=0.50, format="%.2f")
+        user_info['taggeld_max_stunden'] = st.number_input("Taggeld Max ab Std. (Deckelung)", 1.0, 24.0, float(user_info.get('taggeld_max_stunden', 13)), step=0.5, format="%.1f")
+    # Vorschau der Taggeld-Stufen
+    _tg_min = user_info.get('taggeld_min_stunden', 5)
+    _tg_basis = user_info.get('taggeld_basis', 10.00)
+    _tg_stuf = user_info.get('taggeld_stufung', 2.50)
+    _tg_max = user_info.get('taggeld_max_betrag', 30.00)
+    _tg_max_st = user_info.get('taggeld_max_stunden', 13)
+    _prev = []
+    for _h in range(int(_tg_min), int(_tg_max_st) + 2):
+        _b = min(_tg_basis + (_h - _tg_min) * _tg_stuf, _tg_max)
+        _prev.append(f"**{_h}h**={_b:.2f}€")
+    st.caption("Vorschau: " + "  |  ".join(_prev))
     user_info['km_geld'] = st.number_input("Kilometergeld PKW amtlich (EUR)", 0.0, 2.0, float(user_info.get('km_geld', 0.42)), step=0.01, format="%.2f")
 
     jahr = st.number_input("Jahr", min_value=2000, max_value=2100, value=date.today().year, step=1)
