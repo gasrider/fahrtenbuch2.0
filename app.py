@@ -921,11 +921,23 @@ if gen_btn:
     progress_bar = st.progress(0, text="Generiere Fahrten...")
     current_km = {row['id']: _safe_int(row.get('start_km_vorjahr')) for _, row in fahrzeuge_df.iterrows()}
     privat_km_ranges = {row['id']: (_safe_int(row.get('privat_km_min'), default=5), _safe_int(row.get('privat_km_max'), default=20)) for _, row in fahrzeuge_df.iterrows()}
+    rng = np.random.default_rng()  # Ein RNG für alles (kein Neustart pro Monat)
+
+    # Vorberechnung: effektive Werktag-Anzahl pro Monat (für realistische KM-Variation)
+    hol_full = austria_holidays(jahr)
+    month_workday_counts = {}
+    avg_workdays = 0
+    for mk in monate_zum_generieren:
+        days_in_month = pd.date_range(date(jahr, mk, 1), date(jahr, mk, calendar.monthrange(jahr, mk)[1]), freq="D")
+        wd_count = sum(1 for t in days_in_month if t.weekday() < 5 and t.date() not in hol_full and t.date() not in vacation_days)
+        month_workday_counts[mk] = wd_count
+        avg_workdays += wd_count
+    avg_workdays = avg_workdays / len(monate_zum_generieren) if monate_zum_generieren else 21
 
     for i, monat_key in enumerate(monate_zum_generieren):
         progress_bar.progress((i + 1) / len(monate_zum_generieren), text=f"Generiere Monat {monat_key} von {monate_zum_generieren[-1]}...")
         tage = pd.date_range(date(jahr, monat_key, 1), date(jahr, monat_key, calendar.monthrange(jahr, monat_key)[1]), freq="D")
-        out = []; hol = austria_holidays(jahr); rng = np.random.default_rng()
+        out = []; hol = austria_holidays(jahr)
         prob_dienstfahrt_feiertag_urlaub = st.session_state.get('wahrscheinlichkeit_dienstfahrt_feiertag_urlaub', 5) / 100.0
         special_trip_done_this_week = False
 
@@ -1027,11 +1039,22 @@ if gen_btn:
 
         df = pd.DataFrame(out).sort_values(["datum"]).reset_index(drop=True)
         
-        # KORREKTUR: Division durch Null verhindert
+        # KM-Skalierung: monatsspezifischer Zielwert mit Werktag-Faktor
         if not df.empty and target_km_max > 0:
             current_km_d_total = df["km_d"].sum()
             if current_km_d_total > 0 and not (target_km_min <= current_km_d_total <= target_km_max):
-                target_km = (target_km_min + target_km_max) / 2; scaling_factor = target_km / current_km_d_total
+                # 1) Zufälliger Zielwert innerhalb [min, max] für diesen Monat
+                base_target = rng.uniform(target_km_min, target_km_max)
+                # 2) Werktag-Faktor: Monate mit weniger Werktagen (Feiertage/Urlaub) bekommen weniger KM
+                werktag_faktor = month_workday_counts.get(monat_key, 21) / avg_workdays if avg_workdays > 0 else 1.0
+                werktag_faktor = np.clip(werktag_faktor, 0.70, 1.20)
+                # 3) Zusätzliche Zufälligkeit (±12%) für natürliche Schwankung
+                zufalls_faktor = rng.uniform(0.88, 1.12)
+                # 4) Finaler Zielwert für diesen Monat
+                month_target = base_target * werktag_faktor * zufalls_faktor
+                month_target = np.clip(month_target, target_km_min * 0.55, target_km_max * 1.25)
+                # 5) Skalieren
+                scaling_factor = month_target / current_km_d_total
                 df['km_d'] = df.apply(lambda row: int(row['km_d'] * scaling_factor) if row['km_d'] > 0 else 0, axis=1)
                 month_start_km = {fz_id: km - df[df['fahrzeug_id'] == fz_id][['km_d', 'km_p']].sum().sum() for fz_id, km in current_km.items()}
                 corrected_rows = []
