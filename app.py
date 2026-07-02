@@ -348,6 +348,14 @@ def austria_holidays(year):
     E = easter_sunday(year)
     return {date(year, 1, 1), date(year, 1, 6), date(year, 5, 1), date(year, 8, 15), date(year, 10, 26), date(year, 11, 1), date(year, 12, 8), date(year, 12, 25), date(year, 12, 26), E + timedelta(days=1), E + timedelta(days=39), E + timedelta(days=50), E + timedelta(days=60)}
 
+def _safe_dauer_min(dauer_val):
+    """Extrahiert sicher die Dauer in Minuten aus einem 'HH:MM' String."""
+    try:
+        parts = str(dauer_val).split(':')
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError, TypeError, AttributeError):
+        return 0
+
 def berechne_taggeld(dauer_minuten, saetze):
     if dauer_minuten < 5 * 60: 
         return f"{saetze.get('kurz', 14.70):.2f}".replace('.', ',')
@@ -380,8 +388,7 @@ def scan_for_red_flags(df, jahr, monat):
         
         if total_km > 0:
             try:
-                h, m = map(int, str(row["dauer"]).split(':'))
-                dauer_min = h * 60 + m
+                dauer_min = _safe_dauer_min(row["dauer"])
                 if dauer_min > 0:
                     geschwindigkeit = (total_km / dauer_min) * 60
                     if geschwindigkeit > 130:
@@ -459,14 +466,12 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         dt = pd.to_datetime(r["datum"]); german_day_abbr = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
         tag_name = german_day_abbr[dt.weekday()]; tag = f"{tag_name[:2]}.{dt.day:02d}."
         route_para = Paragraph(str(r["route"]), wrap_style)
-        try:
-            dauer_parts = r["dauer"].split(':'); dauer_min = int(dauer_parts[0]) * 60 + int(dauer_parts[1])
-        except: dauer_min = 0
+        dauer_min = _safe_dauer_min(r["dauer"])
         
-        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r["abfahrt_km"]), int(r["km_d"]), int(r["km_p"]), berechne_taggeld(dauer_min, taggeld_saetze), r["fahrzeug"]])
+        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r.get("abfahrt_km", 0) or 0), int(r.get("km_d", 0) or 0), int(r.get("km_p", 0) or 0), berechne_taggeld(dauer_min, taggeld_saetze), r.get("fahrzeug", "")])
     
     sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
-    sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
+    sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
     data.append(["Einzelsummen:", "", "", "", "", "", sum_dienstl, sum_privat, f"{sum_taggeld:.2f}".replace('.', ','), ""])
     
     col_widths = [12*mm, 10*mm, 10*mm, 12*mm, 71*mm, 15*mm, 15*mm, 15*mm, 12*mm, 18*mm]
@@ -531,7 +536,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
             sum_privat = int(df["km_p"].sum())
             
             # KORREKTUR: taggeld_saetze wird jetzt übergeben!
-            sum_taggeld = sum(float(berechne_taggeld(int(r["dauer"].split(':')[0])*60 + int(r["dauer"].split(':')[1]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
+            sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_saetze).replace(',', '.')) for _, r in df.iterrows())
             
             total_dienstl += sum_dienstl
             total_privat += sum_privat 
@@ -866,8 +871,8 @@ if gen_btn:
 
     monate_zum_generieren = list(range(1, 13)) if modus == "Ganzes Jahr" else [monat]
     progress_bar = st.progress(0, text="Generiere Fahrten...")
-    current_km = {row['id']: row['start_km_vorjahr'] for _, row in fahrzeuge_df.iterrows()}
-    privat_km_ranges = {row['id']: (int(row['privat_km_min']), int(row['privat_km_max'])) for _, row in fahrzeuge_df.iterrows()}
+    current_km = {row['id']: _safe_int(row.get('start_km_vorjahr')) for _, row in fahrzeuge_df.iterrows()}
+    privat_km_ranges = {row['id']: (_safe_int(row.get('privat_km_min'), default=5), _safe_int(row.get('privat_km_max'), default=20)) for _, row in fahrzeuge_df.iterrows()}
 
     for i, monat_key in enumerate(monate_zum_generieren):
         progress_bar.progress((i + 1) / len(monate_zum_generieren), text=f"Generiere Monat {monat_key} von {monate_zum_generieren[-1]}...")
@@ -903,7 +908,9 @@ if gen_btn:
                     if is_vacation:
                         urlaub_fahrzeug_name = st.session_state.get('urlaub_fahrzeug', ''); urlaub_fahrzeug_id = fahrzeug_optionen.get(urlaub_fahrzeug_name, None)
                         if urlaub_fahrzeug_id is not None and urlaub_fahrzeug_id in gueltige_fahrzeuge_am_tag:
-                            fahrzeug_id = urlaub_fahrzeug_id; fahrzeug_name = fahrzeuge_df[fahrzeuge_df["id"] == fahrzeug_id]["bezeichnung"].values[0]
+                            fahrzeug_id = urlaub_fahrzeug_id
+                            _urlaub_match = fahrzeuge_df[fahrzeuge_df["id"] == fahrzeug_id]["bezeichnung"]
+                            fahrzeug_name = _urlaub_match.values[0] if len(_urlaub_match) > 0 else "Unbekannt"
                             km_p = rng.integers(st.session_state.get('urlaub_km_min', 30), st.session_state.get('urlaub_km_max', 80)); route = f"Urlaub"
                         else:
                             if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
@@ -964,7 +971,11 @@ if gen_btn:
             # KORREKTUR: Doppelte Zeile entfernt
             abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
             out.append({"datum": t.date(), "fahrzeug_id": fahrzeug_id, "fahrzeug": fahrzeug_name, "route": route, "km_d": km_d, "km_p": km_p, "abf": abf, "ank": ank, "dauer": dauer, "abfahrt_km": abfahrt_km})
-            if fahrzeug_id is not None and (km_d > 0 or km_p > 0): current_km[fahrzeug_id] += km_d + km_p
+            if fahrzeug_id is not None and (km_d > 0 or km_p > 0):
+                if fahrzeug_id in current_km:
+                    current_km[fahrzeug_id] += km_d + km_p
+                else:
+                    current_km[fahrzeug_id] = km_d + km_p
 
         df = pd.DataFrame(out).sort_values(["datum"]).reset_index(drop=True)
         
@@ -1046,7 +1057,8 @@ if df is not None:
                 fz_row = fahrzeuge_df[fahrzeuge_df['bezeichnung'] == new_fzg]
                 fz_id = fz_row['id'].values[0] if not fz_row.empty else 1
                 
-                last_km = int(edited_df['abfahrt_km'].max()) if not edited_df.empty else 0
+                _km_max = pd.to_numeric(edited_df['abfahrt_km'], errors='coerce').max()
+                last_km = int(_km_max) if pd.notna(_km_max) else 0
                 
                 new_row = {
                     "datum": new_date, "fahrzeug_id": int(fz_id), "fahrzeug": new_fzg,
@@ -1134,8 +1146,12 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                         for correction in correction_data:
                             fz_id = correction["fahrzeug_id"]; hu_date = correction["datum"]; km_at_hu = correction["km_at_hu"]; werkstattort = correction["werkstattort"]; zusaetzliche_stopps = correction["zusaetzliche_stopps"]; stopps_vor_hu = correction["stopps_vor_hu"]
                             if fz_id not in all_trips_by_vehicle: st.warning(f"Keine Fahrten für Fahrzeug ID {fz_id} gefunden. Überspringe Korrektur."); continue
-                            fahrzeug_name = fahrzeuge_df[fahrzeuge_df['id'] == fz_id]['bezeichnung'].iloc[0]; st.write(f"**Korrigiere Fahrzeug:** {fahrzeug_name} (ID: {fz_id})")
-                            all_trips_df = all_trips_by_vehicle[fz_id]; start_km = fahrzeuge_df[fahrzeuge_df['id'] == fz_id]['start_km_vorjahr'].iloc[0]
+                            _fz_name_match = fahrzeuge_df[fahrzeuge_df['id'] == fz_id]['bezeichnung']
+                            fahrzeug_name = _fz_name_match.iloc[0] if len(_fz_name_match) > 0 else f"FZ {fz_id}"
+                            st.write(f"**Korrigiere Fahrzeug:** {fahrzeug_name} (ID: {fz_id})")
+                            all_trips_df = all_trips_by_vehicle[fz_id]
+                            _fz_start_match = fahrzeuge_df[fahrzeuge_df['id'] == fz_id]['start_km_vorjahr']
+                            start_km = _safe_int(_fz_start_match.iloc[0]) if len(_fz_start_match) > 0 else 0
                             trips_before_hu = all_trips_df[all_trips_df['datum'] < hu_date].copy()
                             
                             if not trips_before_hu.empty:
@@ -1148,7 +1164,10 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                 for index, corrected_trip in trips_before_hu.iterrows():
                                     monat_key = (corrected_trip['datum'].year, corrected_trip['datum'].month)
                                     original_df = st.session_state["generated_months_data"][monat_key]["data"]
-                                    original_trip_index = original_df[(original_df['datum'] == corrected_trip['datum']) & (original_df['fahrzeug_id'] == fz_id)].index[0]
+                                    _orig_match = original_df[(original_df['datum'] == corrected_trip['datum']) & (original_df['fahrzeug_id'] == fz_id)].index
+                                    if _orig_match.empty:
+                                        continue
+                                    original_trip_index = _orig_match[0]
                                     st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'km_d'] = corrected_trip['km_d']
                                     st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'km_p'] = corrected_trip['km_p']
 
@@ -1188,7 +1207,12 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                 corrected_rows = []
                                 for index, row in df.iterrows():
                                     fz_id = row['fahrzeug_id']
-                                    if fz_id is not None: abfahrt_km_neu = current_km_recalc.get(fz_id, 0); corrected_row = row.to_dict(); corrected_row['abfahrt_km'] = abfahrt_km_neu; corrected_rows.append(corrected_row); current_km_recalc[fz_id] += row['km_d'] + row['km_p']
+                                    if fz_id is not None:
+                                        abfahrt_km_neu = current_km_recalc.get(fz_id, 0)
+                                        corrected_row = row.to_dict()
+                                        corrected_row['abfahrt_km'] = abfahrt_km_neu
+                                        corrected_rows.append(corrected_row)
+                                        current_km_recalc[fz_id] = current_km_recalc.get(fz_id, 0) + _safe_int(row.get('km_d')) + _safe_int(row.get('km_p'))
                                     else: corrected_rows.append(row.to_dict())
                                 st.session_state["generated_months_data"][monat_key]["data"] = pd.DataFrame(corrected_rows)
 
@@ -1261,9 +1285,9 @@ if user in ADMIN_USERS:
                     # Passwort nur überschreiben, wenn etwas eingegeben wurde
                     if cfg_password:
                         save_data["smtp_password"] = cfg_password
-                    elif current_config.get("smtp_password"):
-                        # Behalte bestehendes Passwort, wenn Feld leer
-                        pass  # wird nicht ins dict aufgenommen, Supabase upsert behält bestehenden Wert
+                    else:
+                        # Behalte bestehendes Passwort explizit, damit Upsert es nicht mit NULL überschreibt
+                        save_data["smtp_password"] = current_config.get("smtp_password", "")
 
                     if save_system_config(save_data):
                         st.success("SMTP-Einstellungen gespeichert!")
