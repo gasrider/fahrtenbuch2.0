@@ -138,23 +138,60 @@ def load_settings(username):
     response = supabase.table("settings").select("*").eq("username", username).execute()
     return response.data[0] if response.data else {}
 
+def _safe_int(val, default=0):
+    """Wandelt einen Wert sicher in int um. None, NaN, 'None', '' → default."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)) and pd.notna(val):
+        return int(val)
+    s = str(val).strip().replace('.', '').replace(',', '')
+    if s in ("", "none", "nan", "nat"):
+        return default
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return default
+
+def _parse_date_iso(val):
+    """Konvertiert einen Datumswert sicher in ISO-Format YYYY-MM-DD.
+    Akzeptiert: date, datetime, pd.Timestamp, 'YYYY-MM-DD', 'DD.MM.YYYY'"""
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return None
+    if isinstance(val, (date, datetime)):
+        return val.strftime("%Y-%m-%d")
+    if hasattr(val, 'date') and callable(val.date):
+        return val.date().strftime("%Y-%m-%d")
+    s = str(val).strip()
+    if not s or s.lower() in ("nat", "nan", "none", ""):
+        return None
+    # Versuch 1: ISO-Format YYYY-MM-DD (oder längerer Timestamp)
+    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+        return s[:10]
+    # Versuch 2: Europäisches Format DD.MM.YYYY
+    m = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$', s)
+    if m:
+        try:
+            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            return d.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    return None
+
 def save_fahrzeuge(username, df):
     try:
         supabase.table("fahrzeuge").delete().eq("username", username).execute()
         df = df.dropna(how='all')
-        # KORREKTUR: 'id' NICHT mehr droppen, um Foreign Keys nicht zu zerstören
         df_insert = df.drop(columns=['username'], errors='ignore').to_dict('records')
         clean_insert = []
         for row in df_insert:
             clean_row = {
-                # KORREKTUR: ID beibehalten wenn vorhanden, sonst None (Supabase generiert neue)
-                "id": int(row["id"]) if pd.notna(row.get("id")) and str(row.get("id")) not in ["nan", "None", ""] else None,
+                "id": _safe_int(row.get("id"), default=None) if pd.notna(row.get("id")) and str(row.get("id")).strip() not in ("", "none") else None,
                 "username": username,
-                "bezeichnung": str(row.get("bezeichnung", "")).strip(),
-                "kennzeichen": str(row.get("kennzeichen", "")).strip(),
-                "start_km_vorjahr": int(str(row.get("start_km_vorjahr", 0)).replace('.', '').replace(',', '').strip() or 0),
-                "privat_km_min": int(str(row.get("privat_km_min", 0)).replace('.', '').replace(',', '').strip() or 0),
-                "privat_km_max": int(str(row.get("privat_km_max", 0)).replace('.', '').replace(',', '').strip() or 0)
+                "bezeichnung": str(row.get("bezeichnung", "")).strip() if row.get("bezeichnung") is not None and str(row.get("bezeichnung")).strip().lower() not in ("none", "nan") else "",
+                "kennzeichen": str(row.get("kennzeichen", "")).strip() if row.get("kennzeichen") is not None and str(row.get("kennzeichen")).strip().lower() not in ("none", "nan") else "",
+                "start_km_vorjahr": _safe_int(row.get("start_km_vorjahr")),
+                "privat_km_min": _safe_int(row.get("privat_km_min")),
+                "privat_km_max": _safe_int(row.get("privat_km_max"))
             }
             clean_insert.append(clean_row)
         if clean_insert: supabase.table("fahrzeuge").insert(clean_insert).execute()
@@ -174,12 +211,14 @@ def save_zeitraeume(username, df):
         df_insert = df_save.to_dict('records')
         clean_insert = []
         for row in df_insert:
-            von_str = str(row.get("von", ""))[:10] if pd.notna(row.get("von")) and "NaT" not in str(row["von"]) else None
-            bis_str = str(row.get("bis", ""))[:10] if pd.notna(row.get("bis")) and "NaT" not in str(row["bis"]) else None
-            
+            von_str = _parse_date_iso(row.get("von"))
+            bis_str = _parse_date_iso(row.get("bis"))
+            fzg_id = _safe_int(row.get("fahrzeug_id"), default=None)
+            if not von_str or not bis_str or fzg_id is None:
+                continue
             clean_row = {
                 "username": username,
-                "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
+                "fahrzeug_id": fzg_id,
                 "von": von_str, 
                 "bis": bis_str
             }
