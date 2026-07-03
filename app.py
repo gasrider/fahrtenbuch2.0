@@ -574,7 +574,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
             sum_dienstl = int(df["km_d"].sum())
             sum_privat = int(df["km_p"].sum())
             sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_params).replace(',', '.')) for _, r in df.iterrows())
-            month_km_geld = (sum_dienstl + sum_privat) * km_geld_satz
+            month_km_geld = sum_dienstl * km_geld_satz
 
             total_dienstl += sum_dienstl
             total_privat += sum_privat
@@ -618,7 +618,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Paragraph(f"km-Geld Satz PKW dienstlich ab 01.01.{jahr} EUR 0,00", sum_style))
     story.append(Spacer(1, 2*mm))
     story.append(Paragraph(f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00", sum_style))
-    story.append(Paragraph(f"km-Geld amtlich für {total_all_km}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), sum_style))
+    story.append(Paragraph(f"km-Geld amtlich für {total_dienstl}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), sum_style))
     story.append(Paragraph(f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), sum_style))
     story.append(Paragraph(f"Taggeld + km-Geld amtlich: EUR {gesamt_amtlich:.2f}".replace('.', ','), sum_style))
     story.append(Spacer(1, 2*mm))
@@ -627,40 +627,42 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Spacer(1, 10*mm))
 
     # ===== FAHRZEUGÜBERSICHT =====
-    # Fahrzeug-KM pro Jahr zusammenrechnen (robuste Typ-Konvertierung)
-    vehicle_km_summary = {}
-    fahrzeuge_lookup = {int(row['id']): row for _, row in fahrzeuge_df.iterrows() if pd.notna(row.get('id'))}
+    # Fahrzeug-KM pro Jahr zusammenrechnen – pure Python Schleife über alle Zeilen,
+    # um ALLE pandas/Arrow-Typ-Probleme bei fahrzeug_id und fahrzeug zu umgehen.
+    vehicle_km_summary = {}  # key = fahrzeug_name (str), value = {'km_d': int, 'km_p': int}
     for month_key, month_data in generated_data.items():
-        df = month_data['data']
-        if not df.empty:
-            # Nur Zeilen mit gültiger fahrzeug_id berücksichtigen
-            valid = df[df['fahrzeug_id'].notna()].copy()
-            if valid.empty:
-                continue
-            # fahrzeug_id sicher zu int konvertieren
-            valid['fahrzeug_id'] = valid['fahrzeug_id'].apply(lambda x: int(x) if pd.notna(x) else None)
-            valid = valid[valid['fahrzeug_id'].notna()]
-            summary = valid.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
-            for fz_id, row in summary.iterrows():
-                fz_key = int(fz_id)
-                if fz_key not in vehicle_km_summary:
-                    vehicle_km_summary[fz_key] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_key]['km_d'] += int(row['km_d'])
-                vehicle_km_summary[fz_key]['km_p'] += int(row['km_p'])
+        df = month_data.get('data')
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            continue
+        try:
+            for _, row in df.iterrows():
+                fz_name = str(row.get('fahrzeug', '') or '').strip()
+                if not fz_name or fz_name.lower() in ('none', 'nan', 'kein fahrzeug', 'unbekannt'):
+                    continue
+                if fz_name not in vehicle_km_summary:
+                    vehicle_km_summary[fz_name] = {'km_d': 0, 'km_p': 0}
+                vehicle_km_summary[fz_name]['km_d'] += _safe_int(row.get('km_d'))
+                vehicle_km_summary[fz_name]['km_p'] += _safe_int(row.get('km_p'))
+        except Exception as e:
+            print(f"[WARNING] Fahrzeugübersicht: Fehler bei Monat {month_key}: {e}")
+
+    # Lookup: bezeichnung -> kennzeichen (aus fahrzeuge_df)
+    name_to_kennzeichen = {}
+    for _, row in fahrzeuge_df.iterrows():
+        b = str(row.get('bezeichnung', '')).strip()
+        if b and b.lower() not in ('none', 'nan', ''):
+            name_to_kennzeichen[b] = str(row.get('kennzeichen', '')).strip()
 
     # Tabelle wie Vorjahres-PDF: Fahrzeug | Kennzeichen | dienstl.
     veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
     veh_data = [veh_headers]
     total_km_d = 0
 
-    for fz_key, kms in vehicle_km_summary.items():
-        if fz_key in fahrzeuge_lookup:
-            v = fahrzeuge_lookup[fz_key]
-            name = v.get('bezeichnung', '')
-            kennzeichen = v.get('kennzeichen', '')
-            km_d = kms['km_d']
-            total_km_d += km_d
-            veh_data.append([name, kennzeichen, f"{km_d}"])
+    for fz_name, kms in vehicle_km_summary.items():
+        kz = name_to_kennzeichen.get(fz_name, '')
+        km_d = kms['km_d']
+        total_km_d += km_d
+        veh_data.append([fz_name, kz, f"{km_d}"])
     veh_data.append(["Summen", "", f"{total_km_d}"])
 
     veh_col_widths = [40*mm, 30*mm, 25*mm]
