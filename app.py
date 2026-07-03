@@ -248,15 +248,15 @@ def save_fahrten_to_db(username, generated_data):
                     "jahr": int(jahr), 
                     "monat": int(monat),
                     "datum": str(row["datum"]), 
-                    "fahrzeug_id": int(row["fahrzeug_id"]) if pd.notna(row.get("fahrzeug_id")) else None,
-                    "fahrzeug": str(row["fahrzeug"]),
-                    "route": str(row["route"]),
-                    "km_d": int(row["km_d"]),
-                    "km_p": int(row["km_p"]),
-                    "abf": str(row["abf"]),
-                    "ank": str(row["ank"]),
-                    "dauer": str(row["dauer"]),
-                    "abfahrt_km": int(row["abfahrt_km"])
+                    "fahrzeug_id": _safe_int(row.get("fahrzeug_id"), default=None),
+                    "fahrzeug": str(row.get("fahrzeug", "")),
+                    "route": str(row.get("route", "")),
+                    "km_d": _safe_int(row.get("km_d")),
+                    "km_p": _safe_int(row.get("km_p")),
+                    "abf": str(row.get("abf", "00:00")),
+                    "ank": str(row.get("ank", "00:00")),
+                    "dauer": str(row.get("dauer", "00:00")),
+                    "abfahrt_km": _safe_int(row.get("abfahrt_km"))
                 }
                 clean_insert.append(clean_row)
             
@@ -269,16 +269,16 @@ def update_month_in_db(username, jahr, monat, df):
     for row in df.to_dict('records'):
         clean_row = {
             "username": username, "jahr": int(jahr), "monat": int(monat),
-            "datum": str(row["datum"]), 
-            "fahrzeug_id": int(row["fahrzeug_id"]) if row.get("fahrzeug_id") is not None and str(row.get("fahrzeug_id")) != "nan" else None,
+            "datum": str(row.get("datum", "")), 
+            "fahrzeug_id": _safe_int(row.get("fahrzeug_id"), default=None),
             "fahrzeug": str(row.get("fahrzeug", "")),
             "route": str(row.get("route", "")),
-            "km_d": int(row["km_d"]) if str(row.get("km_d")) != "nan" else 0,
-            "km_p": int(row["km_p"]) if str(row.get("km_p")) != "nan" else 0,
+            "km_d": _safe_int(row.get("km_d")),
+            "km_p": _safe_int(row.get("km_p")),
             "abf": str(row.get("abf", "00:00")),
             "ank": str(row.get("ank", "00:00")),
             "dauer": str(row.get("dauer", "00:00")),
-            "abfahrt_km": int(row["abfahrt_km"]) if str(row.get("abfahrt_km")) != "nan" else 0
+            "abfahrt_km": _safe_int(row.get("abfahrt_km"))
         }
         clean_insert.append(clean_row)
     for i in range(0, len(clean_insert), 500):
@@ -403,7 +403,7 @@ def scan_for_red_flags(df, jahr, monat):
     
     for _, row in df.iterrows():
         datum_str = str(row["datum"])
-        total_km = int(row.get("km_d", 0)) + int(row.get("km_p", 0))
+        total_km = _safe_int(row.get("km_d")) + _safe_int(row.get("km_p"))
         
         if total_km > 0:
             try:
@@ -463,7 +463,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         [Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal'])],
         [Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal'])],
         [Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal'])],
-        [Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", styles['Normal'])],
+        [Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {_safe_int(user_info.get('entfernung'))} km", styles['Normal'])],
         [Paragraph("Fahrzeug(e): " + fzg_string, styles['Normal'])],
     ]
     stamm_table = Table(stamm_data, colWidths=[doc.width])
@@ -493,7 +493,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
         route_para = Paragraph(str(r["route"]), wrap_style)
         dauer_min = _safe_dauer_min(r["dauer"])
         
-        data.append([tag, r["abf"], r["ank"], r["dauer"], route_para, int(r.get("abfahrt_km", 0) or 0), int(r.get("km_d", 0) or 0), int(r.get("km_p", 0) or 0), berechne_taggeld(dauer_min, taggeld_params), r.get("fahrzeug", "")])
+        data.append([tag, str(r.get("abf", "00:00")), str(r.get("ank", "00:00")), str(r.get("dauer", "00:00")), route_para, _safe_int(r.get("abfahrt_km")), _safe_int(r.get("km_d")), _safe_int(r.get("km_p")), berechne_taggeld(dauer_min, taggeld_params), str(r.get("fahrzeug", ""))])
     
     sum_dienstl = int(df["km_d"].sum()); sum_privat = int(df["km_p"].sum())
     sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_params).replace(',', '.')) for _, r in df.iterrows())
@@ -545,7 +545,7 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", info_style))
     story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", info_style))
     story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", info_style))
-    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", info_style))
+    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {_safe_int(user_info.get('entfernung'))} km", info_style))
     story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", info_style))
     story.append(Spacer(1, 8*mm))
 
@@ -801,7 +801,7 @@ with st.sidebar:
     user_info['pnr'] = st.text_input("PNR", user_info.get('pnr', ''))
     user_info['wohnort'] = st.text_input("Wohnort", user_info.get('wohnort', ''))
     user_info['dienstort'] = st.text_input("Dienstort", user_info.get('dienstort', ''))
-    user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, int(user_info.get('entfernung', 25)))
+    user_info['entfernung'] = st.number_input("Entfernung Wohnung ↔ Arbeitsplatz (km)", 0, 300, _safe_int(user_info.get('entfernung', 25)))
     
     st.markdown("**💰 Finanzielle Eckwerte (Sätze anpassen):**")
     st.caption("Taggeld linear: ab Mindeststunden Basis-Betrag, pro weitere Stunde +Stufung, gedeckelt bei Max.")
@@ -983,6 +983,13 @@ if gen_btn:
     # Liste von (von_str, bis_str, fahrzeug_id) für reinen Python-Vergleich
     _zeitraum_liste = [(v, b, fid) for v, b, fid in zip(_zr_von, _zr_bis, _zr_fz_ids) if v and b and fid is not None]
 
+    # WARNUNG: Prüfen ob überhaupt Zeiträume das gewählte Jahr abdecken
+    _jahr_str = str(jahr)
+    _deckt_jahr_ab = any(v[:4] <= _jahr_str <= b[:4] for v, b, _ in _zeitraum_liste)
+    if not _deckt_jahr_ab:
+        st.error(f"⚠️ Kein Zeitraum deckt das Jahr {jahr} ab! Bitte die Zeiträume (von/bis) auf {jahr} aktualisieren, sonst werden keine Fahrzeuge zugewiesen.")
+        st.stop()
+
     # Vorberechnung: effektive Werktag-Anzahl pro Monat (für realistische KM-Variation)
     hol_full = austria_holidays(jahr)
     month_workday_counts = {}
@@ -1067,7 +1074,7 @@ if gen_btn:
                 current_week = t.isocalendar()[1]; target_day_for_tour = 0 if current_week % 2 == 1 else 1
                 
                 if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
-                    special_trip_done_this_week = True; km_p = int(user_info.get('entfernung', 25)); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
+                    special_trip_done_this_week = True; km_p = _safe_int(user_info.get('entfernung'), default=25); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
                     num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
                     for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
                     route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
@@ -1261,10 +1268,10 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
             else:
                 correction_data = []
                 for _, row in edited_hu_events.iterrows():
-                    if row["Fahrzeug"] in fahrzeug_optionen and row["Werkstattort (Dropdown)"]:
-                        zusaetzliche_stopps_raw = row.get("Zusätzliche Stopps (mehrere möglich)", ""); zusaetzliche_stopps = [s.strip() for s in zusaetzliche_stopps_raw.split(',') if s.strip()]
-                        stopps_vor_hu_raw = row.get("Kundenstopps vor HU (mehrere möglich)", ""); stopps_vor_hu = [s.strip() for s in stopps_vor_hu_raw.split(',') if s.strip()]
-                        correction_data.append({"fahrzeug_id": fahrzeug_optionen[row["Fahrzeug"]], "datum": pd.to_datetime(row["Datum der HU"]).date(), "km_at_hu": int(row["Kilometerstand bei HU"]), "werkstattort": row["Werkstattort (Dropdown)"], "zusaetzliche_stopps": zusaetzliche_stopps, "stopps_vor_hu": stopps_vor_hu})
+                    if row["Fahrzeug"] in fahrzeug_optionen and pd.notna(row.get("Werkstattort (Dropdown)")) and row["Werkstattort (Dropdown)"]:
+                        _zusaetz_raw = str(row.get("Zusätzliche Stopps (mehrere möglich)", "") or ""); zusaetzliche_stopps = [s.strip() for s in _zusaetz_raw.split(',') if s.strip()]
+                        _stopps_raw = str(row.get("Kundenstopps vor HU (mehrere möglich)", "") or ""); stopps_vor_hu = [s.strip() for s in _stopps_raw.split(',') if s.strip()]
+                        correction_data.append({"fahrzeug_id": fahrzeug_optionen[row["Fahrzeug"]], "datum": pd.to_datetime(row["Datum der HU"]).date(), "km_at_hu": _safe_int(row.get("Kilometerstand bei HU")), "werkstattort": row["Werkstattort (Dropdown)"], "zusaetzliche_stopps": zusaetzliche_stopps, "stopps_vor_hu": stopps_vor_hu})
                 if not correction_data: st.error("Ungültige Eingabe. Bitte stelle sicher, dass alle Pflichtfelder ausgefüllt sind.")
                 else:
                     with st.spinner("Wende Korrekturen an..."):
@@ -1300,7 +1307,8 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                     trips_before_hu['km_d'] = (trips_before_hu['km_d'] * scaling_factor).astype(int); trips_before_hu['km_p'] = (trips_before_hu['km_p'] * scaling_factor).astype(int)
                                 else: st.write("    - Keine Skalierung notwendig.")
                                 for index, corrected_trip in trips_before_hu.iterrows():
-                                    monat_key = (corrected_trip['datum'].year, corrected_trip['datum'].month)
+                                    _dt = pd.Timestamp(corrected_trip['datum'])
+                                    monat_key = (_dt.year, _dt.month)
                                     original_df = st.session_state["generated_months_data"][monat_key]["data"]
                                     _orig_match = original_df[(original_df['datum'] == corrected_trip['datum']) & (original_df['fahrzeug_id'] == fz_id)].index
                                     if _orig_match.empty:
