@@ -520,7 +520,7 @@ def create_monats_pdf(df, monat, jahr, user_info, fahrzeuge_df):
 
 def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=10*mm)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=20*mm, rightMargin=20*mm, topMargin=15*mm, bottomMargin=15*mm)
     story = []
     styles = getSampleStyleSheet()
     monate = ["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
@@ -534,22 +534,28 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
         'max_stunden': user_info.get('taggeld_max_stunden', 13),
     }
 
-    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", styles['Heading2']))
+    # ===== TITEL (18pt) =====
+    title_style = ParagraphStyle('JahrTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=18, spaceAfter=8*mm)
+    story.append(Paragraph(f"Fahrtenbuch Jahresübersicht {jahr}", title_style))
+
+    # ===== KOPFZEILEN (12pt) =====
+    info_style = ParagraphStyle('Info', parent=styles['Normal'], fontName='Helvetica', fontSize=10, leading=14)
+    fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
+    story.append(Paragraph(f"Name: {user_info.get('name','')}", info_style))
+    story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", info_style))
+    story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", info_style))
+    story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", info_style))
+    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", info_style))
+    story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", info_style))
     story.append(Spacer(1, 8*mm))
 
-    fzg_list = [f"{r.get('bezeichnung','')} ({r.get('kennzeichen','')})" for _, r in fahrzeuge_df.iterrows()]
-    story.append(Paragraph(f"Name: {user_info.get('name','')}", styles['Normal']))
-    story.append(Paragraph(f"PNR: {user_info.get('pnr','')}", styles['Normal']))
-    story.append(Paragraph(f"Wohnort: {user_info.get('wohnort','')}", styles['Normal']))
-    story.append(Paragraph(f"Dienstort: {user_info.get('dienstort','')}", styles['Normal']))
-    story.append(Paragraph(f"Entfernung zwischen Arbeitsplatz und Wohnung: {int(user_info.get('entfernung',0) or 0)} km", styles['Normal']))
-    story.append(Paragraph(f"Fahrzeug(e): {', '.join(fzg_list)}", styles['Normal']))
-    story.append(Spacer(1, 10*mm))
+    # ===== HAUPTTABELLE =====
+    # Zeile 1: Monat | gefahren km (SPAN) | km-Geld (SPAN)
+    # Zeile 2: Monat | dienstl. | privat | PKW | EUR
+    header_row1 = ["Monat", "gefahren km", "", "km-Geld", ""]
+    header_row2 = ["Monat", "dienstl.", "privat", "PKW", "EUR"]
+    data = [header_row1, header_row2]
 
-    headers = ["Monat", "gefahrene km", "km-Geld", "Taggeld"]
-    sub_headers = ["", "dienstl.", "privat", "EUR", "EUR"]
-    data = [headers, sub_headers]
-    
     km_geld_satz = float(user_info.get('km_geld', 0.42))
     total_dienstl = 0
     total_privat = 0
@@ -561,41 +567,66 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
         if monat_key in generated_data:
             month_data = generated_data[monat_key]
             df = month_data["data"] if isinstance(month_data, dict) and "data" in month_data else month_data
-            if df.empty: continue
+            if df.empty:
+                data.append([monat_name, 0, 0, "0,00", "0,00"])
+                continue
 
             sum_dienstl = int(df["km_d"].sum())
             sum_privat = int(df["km_p"].sum())
-            
-            # Taggeld linear berechnen
             sum_taggeld = sum(float(berechne_taggeld(_safe_dauer_min(r["dauer"]), taggeld_params).replace(',', '.')) for _, r in df.iterrows())
-            
+            month_km_geld = (sum_dienstl + sum_privat) * km_geld_satz
+
             total_dienstl += sum_dienstl
-            total_privat += sum_privat 
-            total_km_geld += (sum_dienstl + sum_privat) * km_geld_satz
+            total_privat += sum_privat
+            total_km_geld += month_km_geld
             total_taggeld += sum_taggeld
-            data.append([monat_name, sum_dienstl, sum_privat, f"{(sum_dienstl + sum_privat) * km_geld_satz:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
-        
+            data.append([monat_name, sum_dienstl, sum_privat, f"{month_km_geld:.2f}".replace('.', ','), f"{sum_taggeld:.2f}".replace('.', ',')])
+        else:
+            data.append([monat_name, 0, 0, "0,00", "0,00"])
+
+    total_all_km = total_dienstl + total_privat
     data.append(["Summen", total_dienstl, total_privat, f"{total_km_geld:.2f}".replace('.', ','), f"{total_taggeld:.2f}".replace('.', ',')])
-    
-    col_widths = [30*mm, 25*mm, 25*mm, 30*mm, 30*mm]
+
+    col_widths = [32*mm, 28*mm, 25*mm, 30*mm, 30*mm]
     table = Table(data, colWidths=col_widths, repeatRows=2)
-    style = TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
+    table_style = TableStyle([
+        # Header Zeile 1
+        ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("BACKGROUND", (0, 0), (-1, 1), colors.whitesmoke),
+        # Spans
+        ("SPAN", (1, 0), (2, 0)),  # "gefahren km" über dienstl./privat
+        ("SPAN", (3, 0), (4, 0)),  # "km-Geld" über PKW/EUR
+        # Ausrichtung
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        # Rahmen
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke), 
-        ("SPAN", (1, 0), (2, 0)),
-        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)
+        # Summen-Zeile
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("LINEABOVE", (0, -1), (-1, -1), 1.5, colors.black),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black),
     ])
-    table.setStyle(style)
+    table.setStyle(table_style)
     story.append(table)
-    story.append(Spacer(1, 20*mm))
+    story.append(Spacer(1, 12*mm))
 
-    # --- Fahrzeugübersicht ---
-    # KORREKTUR: Die fehlerhafte Zeile `fahrzeuge_df = st.session_state['fahrzeuge_df']` wurde gelöscht!
+    # ===== ZUSAMMENFASSUNG (Finanzen) =====
+    sum_style = ParagraphStyle('Summary', parent=styles['Normal'], fontName='Helvetica', fontSize=9, leading=13)
+    gesamt_amtlich = total_km_geld + total_taggeld
+    story.append(Paragraph(f"km-Geld Satz PKW amtlich ab 01.01.{jahr} EUR {km_geld_satz:.2f}", sum_style))
+    story.append(Paragraph(f"km-Geld Satz PKW dienstlich ab 01.01.{jahr} EUR 0,00", sum_style))
+    story.append(Spacer(1, 2*mm))
+    story.append(Paragraph(f"km-Geld dienstlich für {total_dienstl}km: EUR 0,00", sum_style))
+    story.append(Paragraph(f"km-Geld amtlich für {total_all_km}km inkl. Mitfahrer: EUR {total_km_geld:.2f}".replace('.', ','), sum_style))
+    story.append(Paragraph(f"Taggeld amtlich: EUR {total_taggeld:.2f}".replace('.', ','), sum_style))
+    story.append(Paragraph(f"Taggeld + km-Geld amtlich: EUR {gesamt_amtlich:.2f}".replace('.', ','), sum_style))
+    story.append(Spacer(1, 2*mm))
+    story.append(Paragraph(f"Vom Dienstgeber vergütete Reisekosten: EUR 0,00", sum_style))
+    story.append(Paragraph(f"Für die Arbeitnehmerveranlagung zu berücksichtigen: EUR {total_km_geld:.2f}".replace('.', ','), sum_style))
+    story.append(Spacer(1, 10*mm))
+
+    # ===== FAHRZEUGÜBERSICHT =====
     vehicle_km_summary = {}
     for month_key, month_data in generated_data.items():
         df = month_data['data']
@@ -607,8 +638,8 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
                 vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
                 vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
 
-    headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
-    data = [headers]
+    veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
+    veh_data = [veh_headers]
     total_km_d = 0
 
     for fz_id, kms in vehicle_km_summary.items():
@@ -616,25 +647,29 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
             vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
             name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
             km_d = kms['km_d']; total_km_d += km_d
-            data.append([name, kennzeichen, f"{km_d}"])
-        
-    data.append(["Summen", "", f"{total_km_d}"])
+            veh_data.append([name, kennzeichen, f"{km_d}"])
+    veh_data.append(["Summen", "", f"{total_km_d}"])
 
-    col_widths = [33*mm, 20*mm, 20*mm]
-    vehicle_table = Table(data, colWidths=col_widths)
-    
+    veh_col_widths = [40*mm, 25*mm, 25*mm]
+    vehicle_table = Table(veh_data, colWidths=veh_col_widths)
     vehicle_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black)
+        ("LINEABOVE", (0, -1), (-1, -1), 1.5, colors.black),
+        ("LINEBELOW", (0, -1), (-1, -1), 1.5, colors.black),
     ]))
-    
-    story.append(Spacer(1, 10*mm))
     story.append(vehicle_table)
+    story.append(Spacer(1, 12*mm))
+
+    # ===== DISCLAIMER =====
+    disc_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=11, textColor=colors.grey)
+    story.append(Paragraph("Die angegebenen Daten beruhen auf persönlichen Aufzeichnungen der oben genannten Person. UNIQA übernimmt keine Haftung für die Richtigkeit der Angaben.", disc_style))
+
     doc.build(story)
     buf.seek(0)
     return buf
