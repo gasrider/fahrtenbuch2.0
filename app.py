@@ -627,43 +627,45 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Spacer(1, 10*mm))
 
     # ===== FAHRZEUGÜBERSICHT =====
-    # Fahrzeug-KM pro Jahr zusammenrechnen – pure Python Schleife über alle Zeilen,
-    # um ALLE pandas/Arrow-Typ-Probleme bei fahrzeug_id und fahrzeug zu umgehen.
-    vehicle_km_summary = {}  # key = fahrzeug_name (str), value = {'km_d': int, 'km_p': int}
-    for month_key, month_data in generated_data.items():
-        df = month_data.get('data')
-        if df is None or (hasattr(df, 'empty') and df.empty):
+    # Ansatz: Für JEDES Fahrzeug aus fahrzeuge_df die KM aus allen Monaten zusammenzählen.
+    # Verwendet .tolist() für maximale Kompatibilität (konvertiert Arrow/numpy zu reinem Python).
+    vehicle_rows = []  # list of (name, kennzeichen, km_d)
+    total_km_d_veh = 0
+    for _, fz_row in fahrzeuge_df.iterrows():
+        fz_name = str(fz_row.get('bezeichnung', '')).strip()
+        fz_kz = str(fz_row.get('kennzeichen', '')).strip()
+        if not fz_name or fz_name.lower() in ('none', 'nan', ''):
             continue
-        try:
-            for _, row in df.iterrows():
-                fz_name = str(row.get('fahrzeug', '') or '').strip()
-                if not fz_name or fz_name.lower() in ('none', 'nan', 'kein fahrzeug', 'unbekannt'):
+        km_d_jahr = 0
+        for month_key, month_data in generated_data.items():
+            try:
+                mdf = month_data.get('data')
+                if mdf is None or (hasattr(mdf, 'empty') and mdf.empty):
                     continue
-                if fz_name not in vehicle_km_summary:
-                    vehicle_km_summary[fz_name] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_name]['km_d'] += _safe_int(row.get('km_d'))
-                vehicle_km_summary[fz_name]['km_p'] += _safe_int(row.get('km_p'))
-        except Exception as e:
-            print(f"[WARNING] Fahrzeugübersicht: Fehler bei Monat {month_key}: {e}")
+                col_list = list(mdf.columns)
+                if 'fahrzeug' not in col_list or 'km_d' not in col_list:
+                    continue
+                # .tolist() konvertiert Arrow/numpy zu reinen Python-Typen
+                fz_vals = mdf['fahrzeug'].tolist()
+                km_vals = mdf['km_d'].tolist()
+                for fz_val, km_val in zip(fz_vals, km_vals):
+                    try:
+                        cell_fz = str(fz_val).strip() if fz_val is not None else ''
+                        if cell_fz.lower() == fz_name.lower():
+                            if km_val is not None:
+                                km_d_jahr += int(float(str(km_val)))
+                    except (ValueError, TypeError):
+                        continue
+            except Exception:
+                continue
+        vehicle_rows.append((fz_name, fz_kz, km_d_jahr))
+        total_km_d_veh += km_d_jahr
 
-    # Lookup: bezeichnung -> kennzeichen (aus fahrzeuge_df)
-    name_to_kennzeichen = {}
-    for _, row in fahrzeuge_df.iterrows():
-        b = str(row.get('bezeichnung', '')).strip()
-        if b and b.lower() not in ('none', 'nan', ''):
-            name_to_kennzeichen[b] = str(row.get('kennzeichen', '')).strip()
-
-    # Tabelle wie Vorjahres-PDF: Fahrzeug | Kennzeichen | dienstl.
     veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
     veh_data = [veh_headers]
-    total_km_d = 0
-
-    for fz_name, kms in vehicle_km_summary.items():
-        kz = name_to_kennzeichen.get(fz_name, '')
-        km_d = kms['km_d']
-        total_km_d += km_d
-        veh_data.append([fz_name, kz, f"{km_d}"])
-    veh_data.append(["Summen", "", f"{total_km_d}"])
+    for name, kz, km in vehicle_rows:
+        veh_data.append([name, kz, f"{km}"])
+    veh_data.append(["Summen", "", f"{total_km_d_veh}"])
 
     veh_col_widths = [40*mm, 30*mm, 25*mm]
     vehicle_table = Table(veh_data, colWidths=veh_col_widths)
