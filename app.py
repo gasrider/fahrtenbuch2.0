@@ -627,37 +627,49 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
     story.append(Spacer(1, 10*mm))
 
     # ===== FAHRZEUGÜBERSICHT =====
+    # Fahrzeug-KM pro Jahr zusammenrechnen (robuste Typ-Konvertierung)
     vehicle_km_summary = {}
+    fahrzeuge_lookup = {int(row['id']): row for _, row in fahrzeuge_df.iterrows() if pd.notna(row.get('id'))}
     for month_key, month_data in generated_data.items():
         df = month_data['data']
         if not df.empty:
-            summary = df.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
+            # Nur Zeilen mit gültiger fahrzeug_id berücksichtigen
+            valid = df[df['fahrzeug_id'].notna()].copy()
+            if valid.empty:
+                continue
+            # fahrzeug_id sicher zu int konvertieren
+            valid['fahrzeug_id'] = valid['fahrzeug_id'].apply(lambda x: int(x) if pd.notna(x) else None)
+            valid = valid[valid['fahrzeug_id'].notna()]
+            summary = valid.groupby('fahrzeug_id')[['km_d', 'km_p']].sum()
             for fz_id, row in summary.iterrows():
-                if fz_id not in vehicle_km_summary:
-                    vehicle_km_summary[fz_id] = {'km_d': 0, 'km_p': 0}
-                vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
-                vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
+                fz_key = int(fz_id)
+                if fz_key not in vehicle_km_summary:
+                    vehicle_km_summary[fz_key] = {'km_d': 0, 'km_p': 0}
+                vehicle_km_summary[fz_key]['km_d'] += int(row['km_d'])
+                vehicle_km_summary[fz_key]['km_p'] += int(row['km_p'])
 
-    veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl.", "gesamt"]
+    # Tabelle wie Vorjahres-PDF: Fahrzeug | Kennzeichen | dienstl.
+    veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
     veh_data = [veh_headers]
     total_km_d = 0
-    total_km_all = 0
 
-    for fz_id, kms in vehicle_km_summary.items():
-        if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
-            vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
-            name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
-            km_d = kms['km_d']; km_all = km_d + kms['km_p']
-            total_km_d += km_d; total_km_all += km_all
-            veh_data.append([name, kennzeichen, f"{km_d}", f"{km_all}"])
-    veh_data.append(["Summen", "", f"{total_km_d}", f"{total_km_all}"])
+    for fz_key, kms in vehicle_km_summary.items():
+        if fz_key in fahrzeuge_lookup:
+            v = fahrzeuge_lookup[fz_key]
+            name = v.get('bezeichnung', '')
+            kennzeichen = v.get('kennzeichen', '')
+            km_d = kms['km_d']
+            total_km_d += km_d
+            veh_data.append([name, kennzeichen, f"{km_d}"])
+    veh_data.append(["Summen", "", f"{total_km_d}"])
 
-    veh_col_widths = [35*mm, 25*mm, 25*mm, 25*mm]
+    veh_col_widths = [40*mm, 30*mm, 25*mm]
     vehicle_table = Table(veh_data, colWidths=veh_col_widths)
     vehicle_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (0, 1), (0, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
