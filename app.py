@@ -976,6 +976,13 @@ if gen_btn:
     privat_km_ranges = {row['id']: (_safe_int(row.get('privat_km_min'), default=5), _safe_int(row.get('privat_km_max'), default=20)) for _, row in fahrzeuge_df.iterrows()}
     rng = np.random.default_rng()  # Ein RNG für alles (kein Neustart pro Monat)
 
+    # VORAB: Zeiträume in reine Python-Listen konvertieren (vermeidet Arrow/Typ-Probleme beim Vergleich)
+    _zr_von = [str(x)[:10] if x is not None and str(x).strip() not in ('', 'none', 'nan') else '' for x in zeitraeume_df["von"].tolist()]
+    _zr_bis = [str(x)[:10] if x is not None and str(x).strip() not in ('', 'none', 'nan') else '' for x in zeitraeume_df["bis"].tolist()]
+    _zr_fz_ids = [int(x) if x is not None and str(x).strip() not in ('', 'none', 'nan') else None for x in zeitraeume_df["fahrzeug_id"].tolist()]
+    # Liste von (von_str, bis_str, fahrzeug_id) für reinen Python-Vergleich
+    _zeitraum_liste = [(v, b, fid) for v, b, fid in zip(_zr_von, _zr_bis, _zr_fz_ids) if v and b and fid is not None]
+
     # Vorberechnung: effektive Werktag-Anzahl pro Monat (für realistische KM-Variation)
     hol_full = austria_holidays(jahr)
     month_workday_counts = {}
@@ -997,11 +1004,18 @@ if gen_btn:
         for t in tage:
             route = "Keine Fahrt"; km_d = 0; km_p = 0; abf = "00:00"; ank = "00:00"; dauer = "00:00"; fahrzeug_id = None; fahrzeug_name = "Kein Fahrzeug"
             tag_str = t.strftime("%Y-%m-%d")
-            gueltige_fahrzeuge_am_tag = pd.to_numeric(zeitraeume_df[(zeitraeume_df["von"] <= tag_str) & (zeitraeume_df["bis"] >= tag_str)]["fahrzeug_id"], errors="coerce").dropna().astype(int).tolist()
+            # Reiner Python-Vergleich: welche Zeiträume decken diesen Tag ab?
+            gueltige_fahrzeuge_am_tag = [fid for v, b, fid in _zeitraum_liste if v <= tag_str <= b]
             if gueltige_fahrzeuge_am_tag:
                 fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag)
-                match = fahrzeuge_df[fahrzeuge_df["id"] == fahrzeug_id]["bezeichnung"]
-                fahrzeug_name = match.values[0] if len(match) > 0 else "Unbekannt"
+                # Robuster Vergleich: bezeichnung direkt über fahrzeug_optionen (invertierte Dict)
+                fz_id_int = int(fahrzeug_id)
+                fahrzeug_name = "Unbekannt"
+                for bname, bid in fahrzeug_optionen.items():
+                    if int(bid) == fz_id_int:
+                        fahrzeug_name = bname
+                        fahrzeug_id = fz_id_int
+                        break
             if t.weekday() == 0: special_trip_done_this_week = False
             is_saturday = t.weekday() == 5; is_sunday = t.weekday() == 6; is_holiday = t.date() in hol; is_vacation = (t.date() in vacation_days)
 
