@@ -638,19 +638,21 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
                 vehicle_km_summary[fz_id]['km_d'] += int(row['km_d'])
                 vehicle_km_summary[fz_id]['km_p'] += int(row['km_p'])
 
-    veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl."]
+    veh_headers = ["Fahrzeug", "Kennzeichen", "dienstl.", "gesamt"]
     veh_data = [veh_headers]
     total_km_d = 0
+    total_km_all = 0
 
     for fz_id, kms in vehicle_km_summary.items():
         if not fahrzeuge_df[fahrzeuge_df['id'] == fz_id].empty:
             vehicle_info = fahrzeuge_df[fahrzeuge_df['id'] == fz_id].iloc[0]
             name = vehicle_info['bezeichnung']; kennzeichen = vehicle_info['kennzeichen']
-            km_d = kms['km_d']; total_km_d += km_d
-            veh_data.append([name, kennzeichen, f"{km_d}"])
-    veh_data.append(["Summen", "", f"{total_km_d}"])
+            km_d = kms['km_d']; km_all = km_d + kms['km_p']
+            total_km_d += km_d; total_km_all += km_all
+            veh_data.append([name, kennzeichen, f"{km_d}", f"{km_all}"])
+    veh_data.append(["Summen", "", f"{total_km_d}", f"{total_km_all}"])
 
-    veh_col_widths = [40*mm, 25*mm, 25*mm]
+    veh_col_widths = [35*mm, 25*mm, 25*mm, 25*mm]
     vehicle_table = Table(veh_data, colWidths=veh_col_widths)
     vehicle_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
