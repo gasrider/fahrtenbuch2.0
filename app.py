@@ -872,6 +872,15 @@ colF1, colF2 = st.columns(2)
 with colF1: wahrscheinlichkeit_dienstfahrt_feiertag_urlaub = st.slider("Wahrscheinlichkeit für Dienstfahrt an Feiertagen/Urlaubstagen (%)", 0, 100, value=5, key="wahrscheinlichkeit_dienstfahrt_feiertag_urlaub", help="Steuert, wie wahrscheinlich eine Dienstfahrt an einem Feiertag oder während des Urlaubs ist.")
 with colF2: st.info("Restliche Fahrten sind Privatfahrten.")
 
+st.markdown("**🚗 Hauptfahrzeug-Gewichtung:**")
+st.caption("Wähle ein Hauptfahrzeug und bestimme, wie viel Prozent der Fahrten diesem zugewiesen werden. Die restlichen Prozent werden gleichmäßig auf die anderen Fahrzeuge verteilt.")
+hfz_col1, hfz_col2 = st.columns(2)
+fahrzeug_namen_liste = list(fahrzeuge_df['bezeichnung'].dropna().tolist()) if not fahrzeuge_df.empty else []
+with hfz_col1:
+    hauptfahrzeug_name = st.selectbox("Hauptfahrzeug", options=["(keines - gleichmäßig)"] + fahrzeug_namen_liste, key="hauptfahrzeug_select", help="Das Hauptfahrzeug bekommt den größten Anteil der Fahrten.")
+with hfz_col2:
+    hauptfahrzeug_anteil = st.slider("Anteil Hauptfahrzeug (%)", 0, 100, value=70, key="hauptfahrzeug_anteil", help="Wie viel Prozent der Fahrten gehen an das Hauptfahrzeug?")
+
 # ========= Uploads =========
 st.markdown("---"); st.subheader("📁 oder Excel-Dateien hochladen (optional)")
 colU1, colU2, colU3 = st.columns(3)
@@ -1014,7 +1023,21 @@ if gen_btn:
             # Reiner Python-Vergleich: welche Zeiträume decken diesen Tag ab?
             gueltige_fahrzeuge_am_tag = [fid for v, b, fid in _zeitraum_liste if v <= tag_str <= b]
             if gueltige_fahrzeuge_am_tag:
-                fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag)
+                # Hauptfahrzeug-Gewichtung anwenden
+                _hfz_name = st.session_state.get('hauptfahrzeug_select', '(keines - gleichmäßig)')
+                _hfz_anteil = st.session_state.get('hauptfahrzeug_anteil', 70) / 100.0
+                if _hfz_name != '(keines - gleichmäßig)' and len(gueltige_fahrzeuge_am_tag) > 1:
+                    # ID des Hauptfahrzeugs ermitteln
+                    _hfz_id = fahrzeug_optionen.get(_hfz_name)
+                    if _hfz_id is not None and int(_hfz_id) in gueltige_fahrzeuge_am_tag:
+                        # Gewichte berechnen: Hauptfahrzeug bekommt _hfz_anteil, Rest gleichmäßig
+                        _rest_anteil = (1.0 - _hfz_anteil) / (len(gueltige_fahrzeuge_am_tag) - 1)
+                        _weights = [_rest_anteil if int(fid) != int(_hfz_id) else _hfz_anteil for fid in gueltige_fahrzeuge_am_tag]
+                        fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag, p=_weights)
+                    else:
+                        fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag)
+                else:
+                    fahrzeug_id = rng.choice(gueltige_fahrzeuge_am_tag)
                 # Robuster Vergleich: bezeichnung direkt über fahrzeug_optionen (invertierte Dict)
                 fz_id_int = int(fahrzeug_id)
                 fahrzeug_name = "Unbekannt"
