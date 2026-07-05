@@ -902,23 +902,26 @@ if kw_xlsx is None and keyword_text:
 
 def process_fahrzeuge(file):
     df = normalize_df_cols(pd.read_excel(file)); df = coalesce(df, ["id", "fahrzeug_id"], "id"); df = coalesce(df, ["bezeichnung", "fahrzeug", "name", "modell"], "bezeichnung"); df = coalesce(df, ["kennzeichen", "kennz"], "kennzeichen")
-    # Endkilometer-Spalten erkennen (endkilometer_YYYY, endkm_YYYY etc.)
+    # Endkilometer-Spalten erkennen (endkilometer_YYYY, endkm_YYYY, endkm, kilometerstand_ende etc.)
     _endkm_col = None
     for c in df.columns:
-        if str(c).lower().startswith("endkilometer") or str(c).lower().startswith("endkm_"):
+        cl = str(c).lower()
+        if cl.startswith("endkilometer") or cl.startswith("endkm") or cl.startswith("kilometerstand_ende") or cl.startswith("km_stand_ende"):
             _endkm_col = c; break
     # Startkilometer: zuerst coalesce der Standard-Spaltennamen
     _startkm_candidates = ["start_km_vorjahr", "startkmvorjahr", "start_km", "startkm", "vorjahr_km", "start_km_jahr"]
     df = coalesce(df, _startkm_candidates, "start_km_vorjahr")
+    # WICHTIG: start_km_vorjahr Spalte MUSS hier schon existieren, damit der Endkm-Check greift
+    if "start_km_vorjahr" not in df.columns:
+        df["start_km_vorjahr"] = 0
     # Wenn start_km_vorjahr 0 ist und eine Endkilometer-Spalte existiert, diese Werte übernehmen
-    if _endkm_col and _endkm_col in df.columns and "start_km_vorjahr" in df.columns:
+    if _endkm_col and _endkm_col in df.columns:
         df["start_km_vorjahr"] = pd.to_numeric(df["start_km_vorjahr"], errors="coerce").fillna(0)
         df["_endkm_vals"] = pd.to_numeric(df[_endkm_col], errors="coerce").fillna(0)
         # Nur überschreiben wo start_km_vorjahr 0 oder leer ist
         df["start_km_vorjahr"] = df["start_km_vorjahr"].where(df["start_km_vorjahr"] != 0, df["_endkm_vals"])
         df.drop(columns=["_endkm_vals"], inplace=True, errors="ignore")
     df = coalesce(df, ["privat_km_min", "privatkmmin", "min_privat_km"], "privat_km_min"); df = coalesce(df, ["privat_km_max", "privatkmmax", "max_privat_km"], "privat_km_max")
-    if "start_km_vorjahr" not in df.columns: df["start_km_vorjahr"] = 0
     if "privat_km_min" not in df.columns: df["privat_km_min"] = 5  
     if "privat_km_max" not in df.columns: df["privat_km_max"] = 20 
     df["id"] = pd.to_numeric(df["id"], errors="coerce").astype("Int64"); df["start_km_vorjahr"] = pd.to_numeric(df["start_km_vorjahr"], errors="coerce").fillna(0).astype(int); df["privat_km_min"] = pd.to_numeric(df["privat_km_min"], errors="coerce").fillna(5).astype(int); df["privat_km_max"] = pd.to_numeric(df["privat_km_max"], errors="coerce").fillna(20).astype(int)
