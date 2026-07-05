@@ -1166,6 +1166,27 @@ if gen_btn:
 
     progress_bar.empty()
     st.success(f"Fahrten für {len(monate_zum_generieren)} Monat(e) generiert.")
+    
+    # Endkilometer pro Fahrzeug anzeigen und als start_km_vorjahr speichern
+    if current_km:
+        end_km_lines = []
+        for _, fz_row in fahrzeuge_df.iterrows():
+            fz_id = int(fz_row['id']) if pd.notna(fz_row.get('id')) else None
+            if fz_id is not None and fz_id in current_km:
+                end_km = int(current_km[fz_id])
+                end_km_lines.append(f"  • {fz_row.get('bezeichnung', '?')}: **{end_km:,} km**")
+        if end_km_lines:
+            st.info("🏁 **Endkilometerstand pro Fahrzeug (Jahresende):**\n" + "\n".join(end_km_lines))
+            # Endkilometer als start_km_vorjahr in DB speichern (für nächstes Jahr bereit)
+            try:
+                for _, fz_row in fahrzeuge_df.iterrows():
+                    fz_id = int(fz_row['id']) if pd.notna(fz_row.get('id')) else None
+                    if fz_id is not None and fz_id in current_km:
+                        supabase.table("fahrzeuge").update({"start_km_vorjahr": int(current_km[fz_id])}).eq("id", fz_id).eq("username", user).execute()
+                st.toast("Endkilometer als Startkilometer fürs nächste Jahr gespeichert!")
+            except Exception as e:
+                st.warning(f"Endkilometer konnten nicht gespeichert werden: {e}")
+    
     last_monat_key = (jahr, monate_zum_generieren[-1])
     st.session_state["fahrten_df"] = st.session_state["generated_months_data"][last_monat_key]["data"]
     
