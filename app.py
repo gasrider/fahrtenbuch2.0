@@ -1335,16 +1335,17 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
     st.subheader("🔧 Kilometerstand anpassen (Hauptuntersuchung)")
     st.info("Hier kannst du für jedes Fahrzeug den Kilometerstand an einem bestimmten Datum (z.B. von einer Hauptuntersuchung) anpassen. Die Fahrten werden vor und nach diesem Datum neu berechnet und eine Fahrt zur Werkstatt erstellt.")
     with st.expander("Korrekturen vornehmen"):
-        hu_events_df = pd.DataFrame(columns=["Fahrzeug", "Datum der HU", "Kilometerstand bei HU", "Werkstattort (Dropdown)", "Kundenstopps vor HU (mehrere möglich)", "Zusätzliche Stopps (mehrere möglich)"])
+        hu_events_df = pd.DataFrame(columns=["Fahrzeug", "Datum der HU", "Kilometerstand bei HU", "Werkstattort (Dropdown)", "Kundenstopps vor HU (mehrere möglich)", "Kundenstopps nach HU (mehrere möglich)"])
         fahrzeug_optionen = {row['bezeichnung']: row['id'] for _, row in fahrzeuge_df.iterrows()}
         werkstatt_orte = sorted(list(keywords['Ort'].unique()))
+        verfuegbare_orte_str = ", ".join(werkstatt_orte[:20]) + (" ..." if len(werkstatt_orte) > 20 else "")
         column_config = {
             "Fahrzeug": st.column_config.SelectboxColumn("Fahrzeug", help="Wähle das Fahrzeug aus", options=list(fahrzeug_optionen.keys()), required=True),
             "Datum der HU": st.column_config.DateColumn("Datum der HU", help="Datum der Hauptuntersuchung", format="DD.MM.YYYY", required=True),
             "Kilometerstand bei HU": st.column_config.NumberColumn("Kilometerstand bei HU (km)", help="Kilometerstand, der am Tacho bei der HU abgelesen wurde", min_value=0, step=1, required=True),
             "Werkstattort (Dropdown)": st.column_config.SelectboxColumn("Werkstattort", help="Wähle den Ort der Werkstatt aus der Liste", options=werkstatt_orte, required=True),
-            "Kundenstopps vor HU (mehrere möglich)": st.column_config.TextColumn("Kundenstopps vor HU", help="Gib hier mehrere Orte ein, getrennt durch ein Komma (z.B. Salzburg, Seekirchen)", max_chars=200, default="", required=False),
-            "Zusätzliche Stopps (mehrere möglich)": st.column_config.TextColumn("Zusätzliche Stopps (Kunden)", help="Gib hier mehrere Orte ein, getrennt durch ein Komma (z.B. Eugendorf, Henndorf)", max_chars=200, default="", required=False),
+            "Kundenstopps vor HU (mehrere möglich)": st.column_config.TextColumn("Kundenstopps vor HU", help=f"Orte EINTIPPEN (Komma-getrennt). Zweck wird automatisch zugewiesen. Verfügbare Orte: {verfuegbare_orte_str}", max_chars=300, default="", required=False),
+            "Kundenstopps nach HU (mehrere möglich)": st.column_config.TextColumn("Kundenstopps nach HU", help=f"Orte EINTIPPEN (Komma-getrennt). Zweck wird automatisch zugewiesen. Verfügbare Orte: {verfuegbare_orte_str}", max_chars=300, default="", required=False),
         }
         edited_hu_events = st.data_editor(hu_events_df, column_config=column_config, num_rows="dynamic", use_container_width=True, key="hu_editor")
 
@@ -1354,9 +1355,9 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                 correction_data = []
                 for _, row in edited_hu_events.iterrows():
                     if row["Fahrzeug"] in fahrzeug_optionen and pd.notna(row.get("Werkstattort (Dropdown)")) and row["Werkstattort (Dropdown)"]:
-                        _zusaetz_raw = str(row.get("Zusätzliche Stopps (mehrere möglich)", "") or ""); zusaetzliche_stopps = [s.strip() for s in _zusaetz_raw.split(',') if s.strip()]
+                        _nach_hu_raw = str(row.get("Kundenstopps nach HU (mehrere möglich)", "") or ""); stopps_nach_hu = [s.strip() for s in _nach_hu_raw.split(',') if s.strip()]
                         _stopps_raw = str(row.get("Kundenstopps vor HU (mehrere möglich)", "") or ""); stopps_vor_hu = [s.strip() for s in _stopps_raw.split(',') if s.strip()]
-                        correction_data.append({"fahrzeug_id": fahrzeug_optionen[row["Fahrzeug"]], "datum": pd.to_datetime(row["Datum der HU"]).date(), "km_at_hu": _safe_int(row.get("Kilometerstand bei HU")), "werkstattort": row["Werkstattort (Dropdown)"], "zusaetzliche_stopps": zusaetzliche_stopps, "stopps_vor_hu": stopps_vor_hu})
+                        correction_data.append({"fahrzeug_id": fahrzeug_optionen[row["Fahrzeug"]], "datum": pd.to_datetime(row["Datum der HU"]).date(), "km_at_hu": _safe_int(row.get("Kilometerstand bei HU")), "werkstattort": row["Werkstattort (Dropdown)"], "stopps_nach_hu": stopps_nach_hu, "stopps_vor_hu": stopps_vor_hu})
                 if not correction_data: st.error("Ungültige Eingabe. Bitte stelle sicher, dass alle Pflichtfelder ausgefüllt sind.")
                 else:
                     with st.spinner("Wende Korrekturen an..."):
@@ -1374,7 +1375,7 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                             if all_trips_for_vehicle: all_trips_by_vehicle[fz_id] = pd.concat(all_trips_for_vehicle).sort_values(by="datum").reset_index(drop=True)
 
                         for correction in correction_data:
-                            fz_id = correction["fahrzeug_id"]; hu_date = correction["datum"]; km_at_hu = correction["km_at_hu"]; werkstattort = correction["werkstattort"]; zusaetzliche_stopps = correction["zusaetzliche_stopps"]; stopps_vor_hu = correction["stopps_vor_hu"]
+                            fz_id = correction["fahrzeug_id"]; hu_date = correction["datum"]; km_at_hu = correction["km_at_hu"]; werkstattort = correction["werkstattort"]; stopps_nach_hu = correction["stopps_nach_hu"]; stopps_vor_hu = correction["stopps_vor_hu"]
                             if fz_id not in all_trips_by_vehicle: st.warning(f"Keine Fahrten für Fahrzeug ID {fz_id} gefunden. Überspringe Korrektur."); continue
                             _fz_name_match = fahrzeuge_df[fahrzeuge_df['id'] == fz_id]['bezeichnung']
                             fahrzeug_name = _fz_name_match.iloc[0] if len(_fz_name_match) > 0 else f"FZ {fz_id}"
@@ -1407,12 +1408,32 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                             hu_trip_index = hu_month_df[(hu_month_df['datum'] == hu_date) & (hu_month_df['fahrzeug_id'] == fz_id)].index
                             if hu_trip_index.empty: hu_trip_index = hu_month_df[hu_month_df['datum'] == hu_date].index
 
-                            total_stops = len(stopps_vor_hu) + 1 + len(zusaetzliche_stopps)
+                            # Zweck-Lookup-Funktion: sucht Zweck aus Keywords-Tabelle
+                            def _lookup_zweck(ort_name):
+                                ort_clean = ort_name.strip().lower()
+                                matching = keywords[keywords['Ort'].str.lower().str.strip() == ort_clean]
+                                if not matching.empty:
+                                    return rng.choice(matching['Zweck'].tolist())
+                                # Fallback: Teilübereinstimmung
+                                for _, kw_row in keywords.iterrows():
+                                    if ort_clean in str(kw_row['Ort']).lower() or str(kw_row['Ort']).lower() in ort_clean:
+                                        return kw_row['Zweck']
+                                return rng.choice(["Angebot", "Schaden", "KB"])
+
+                            total_stops = len(stopps_vor_hu) + 1 + len(stopps_nach_hu)
                             hu_km_d_total = rng.integers(20, 40) + total_stops * rng.integers(10, 20)
 
+                            # Route aufbauen: Wohnort → Kundenstopps VOR HU → Werkstatt (HU) → Kundenstopps NACH HU → Wohnort
                             route_parts = [wohnort_clean]
-                            for stop in stopps_vor_hu: zufalls_zweck = rng.choice(["Angebot", "Schaden", "KB"]); route_parts.append(f"{stop} ({zufalls_zweck})")
-                            route_parts.append(f"{werkstattort} (HU)"); route_parts.append(wohnort_clean); hu_route = " - ".join(route_parts)
+                            for stop in stopps_vor_hu:
+                                zweck = _lookup_zweck(stop)
+                                route_parts.append(f"{stop} ({zweck})")
+                            route_parts.append(f"{werkstattort} (HU)")
+                            for stop in stopps_nach_hu:
+                                zweck = _lookup_zweck(stop)
+                                route_parts.append(f"{stop} ({zweck})")
+                            route_parts.append(wohnort_clean)
+                            hu_route = " - ".join(route_parts)
                             
                             hu_dauer_min = 90 + total_stops * 20
                             hu_abf_dt = datetime.combine(hu_date, datetime.min.time()) + timedelta(hours=8, minutes=30); hu_ank_dt = hu_abf_dt + timedelta(minutes=hu_dauer_min)
