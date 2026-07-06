@@ -120,21 +120,43 @@ def verify_user(username, password):
         return True, response.data[0]
     return False, {}
 
+def _safe_float(val, default=0.0):
+    """Wandelt einen Wert sicher in float um. None, NaN, pd.NA → default."""
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val) if not (isinstance(val, float) and (np.isnan(val) if hasattr(np, 'isnan') else False)) else default
+    if hasattr(val, 'item'):  # numpy/pandas scalar
+        v = val.item()
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return default
+        return float(v)
+    s = str(val).strip().replace(',', '.')
+    if s in ("", "none", "nan", "nat"):
+        return default
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
 def save_settings(username, data_dict):
-    supabase.table("settings").upsert({
-        "username": username, 
-        "name": data_dict.get('name',''), 
-        "pnr": data_dict.get('pnr',''), 
-        "wohnort": data_dict.get('wohnort',''), 
-        "dienstort": data_dict.get('dienstort',''), 
-        "entfernung": data_dict.get('entfernung', 0),
-        "taggeld_min_stunden": data_dict.get('taggeld_min_stunden', 5),
-        "taggeld_basis": data_dict.get('taggeld_basis', 10.00),
-        "taggeld_stufung": data_dict.get('taggeld_stufung', 2.50),
-        "taggeld_max_betrag": data_dict.get('taggeld_max_betrag', 30.00),
-        "taggeld_max_stunden": data_dict.get('taggeld_max_stunden', 13),
-        "km_geld": data_dict.get('km_geld', 0.42)
-    }).execute()
+    try:
+        supabase.table("settings").upsert({
+            "username": str(username),
+            "name": str(data_dict.get('name', '') or ''),
+            "pnr": str(data_dict.get('pnr', '') or ''),
+            "wohnort": str(data_dict.get('wohnort', '') or ''),
+            "dienstort": str(data_dict.get('dienstort', '') or ''),
+            "entfernung": _safe_int(data_dict.get('entfernung'), 0),
+            "taggeld_min_stunden": _safe_float(data_dict.get('taggeld_min_stunden'), 5),
+            "taggeld_basis": _safe_float(data_dict.get('taggeld_basis'), 10.00),
+            "taggeld_stufung": _safe_float(data_dict.get('taggeld_stufung'), 2.50),
+            "taggeld_max_betrag": _safe_float(data_dict.get('taggeld_max_betrag'), 30.00),
+            "taggeld_max_stunden": _safe_float(data_dict.get('taggeld_max_stunden'), 13),
+            "km_geld": _safe_float(data_dict.get('km_geld'), 0.42)
+        }).execute()
+    except Exception as e:
+        st.error(f"Fehler beim Speichern der Stammdaten: {getattr(e, 'message', str(e))}")
 
 def load_settings(username):
     response = supabase.table("settings").select("*").eq("username", username).execute()
