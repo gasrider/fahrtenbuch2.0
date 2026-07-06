@@ -458,82 +458,113 @@ def scan_for_red_flags(df, jahr, monat):
 def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=100):
     """Korrigiert automatisch unrealistische Geschwindigkeiten:
     1. Reduziert km_d auf realistischen Wert (dauer * max_avg_speed km/h)
-    2. Verteilt überschüssige km auf andere dienstliche Tage im Jahr
+    2. Überschüssige km werden auf das GANZE JAHR verteilt:
+       - ~60% als kleine km_d-Zuschläge auf dienstliche Tage (max +3 km/Tag)
+       - ~40% als kleine km_p-Zuschläge auf verschiedene Tage (max +5 km/Tag)
+       → Pro Tag nur wenige km mehr, fällt bei Prüfung nicht auf
     3. Berechnet alle abfahrt_km neu
     Gibt (korrigierte_data, anzahl_korrekturen, verteilte_km) zurück.
     """
     korrekturen = 0
-    verteilte_km_gesamt = 0
+    total_excess = 0
     
-    # Sammle alle Flags über alle Monate
-    flag_days = []  # [(monat_key, index_in_df, excess_km, realistic_km_d)]
-    
-    for monat_key, data in generated_months_data.items():
-        df = data["data"]
-        for idx, row in df.iterrows():
-            total_km = _safe_int(row.get("km_d")) + _safe_int(row.get("km_p"))
-            if total_km > 0:
-                dauer_min = _safe_dauer_min(row.get("dauer"))
-                if dauer_min > 0:
-                    geschwindigkeit = (total_km / dauer_min) * 60
-                    if geschwindigkeit > max_avg_speed:
-                        realistic_km = int(dauer_min * max_avg_speed / 60)
-                        excess_km = total_km - realistic_km
-                        if excess_km > 0:
-                            flag_days.append((monat_key, idx, excess_km, realistic_km, _safe_int(row.get("km_d"))))
-    
-    if not flag_days:
-        return generated_months_data, 0, 0
-    
-    # Sammle alle Verteilungs-Ziele: dienstliche Tage mit km_d > 0, die kein Flag haben
-    flag_indices = {(mk, idx) for mk, idx, _, _, _ in flag_days}
-    verteilungs_ziele = []  # [(monat_key, idx, aktuelles_km_d)]
-    
+    # Phase 1: Flag-Tage finden und km_d reduzieren
     for monat_key, data in generated_months_data.items():
         df = data["data"]
         for idx, row in df.iterrows():
             km_d = _safe_int(row.get("km_d"))
             km_p = _safe_int(row.get("km_p"))
-            if km_d > 0 and (monat_key, idx) not in flag_indices:
-                # Prüfe ob dieser Tag auch realistisch ist
-                dauer_min = _safe_dauer_min(row.get("dauer"))
-                if dauer_min > 0:
-                    geschw = ((km_d + km_p) / dauer_min) * 60
-                    if geschw < 80:  # Nur Tage die noch Platz haben
-                        verteilungs_ziele.append((monat_key, idx, km_d))
+            total_km = km_d + km_p
+            if total_km <= 0 or km_d <= 0:
+                continue
+            dauer_min = _safe_dauer_min(row.get("dauer"))
+            if dauer_min <= 0:
+                continue
+            geschwindigkeit = (total_km / dauer_min) * 60
+            if geschwindigkeit > max_avg_speed:
+                realistic_km_d = max(int(dauer_min * max_avg_speed / 60), 1)
+                excess_km = km_d - realistic_km_d
+                if excess_km > 0:
+                    generated_months_data[monat_key]["data"].at[idx, "km_d"] = realistic_km_d
+                    generated_months_data[monat_key]["data"].at[idx, "km_p"] = km_p
+                    total_excess += excess_km
+                    korrekturen += 1
     
-    if not verteilungs_ziele:
+    if total_excess <= 0:
         return generated_months_data, 0, 0
     
-    # KM auf Flag-Tage reduzieren
-    for monat_key, idx, excess_km, realistic_km, orig_km_d in flag_days:
-        df = generated_months_data[monat_key]["data"]
-        # km_d proportional reduzieren (behalte Verhältnis km_d / total)
-        total_orig = _safe_int(df.at[idx, "km_d"]) + _safe_int(df.at[idx, "km_p"])
-        if total_orig > 0 and orig_km_d > 0:
-            anteil_km_d = _safe_int(df.at[idx, "km_d"]) / total_orig
-            new_km_d = max(int(realistic_km * anteil_km_d), 1)
-        else:
-            new_km_d = max(realistic_km, 1)
-        generated_months_data[monat_key]["data"].at[idx, "km_d"] = new_km_d
-        generated_months_data[monat_key]["data"].at[idx, "km_p"] = 0
-        korrekturen += 1
+    # Phase 2: Verteilungs-Ziele sammeln (Flag-Tage ausschließen)
+    flag_indices = set()
+    for monat_key, data in generated_months_data.items():
+        df = data["data"]
+        for idx, row in df.iterrows():
+            km_d = _safe_int(row.get("km_d"))
+            km_p = _safe_int(row.get("km_p"))
+            total_km = km_d + km_p
+            if total_km > 0:
+                dauer_min = _safe_dauer_min(row.get("dauer"))
+                if dauer_min > 0:
+                    geschw = (total_km / dauer_min) * 60
+                    if geschw > max_avg_speed:
+                        flag_indices.add((monat_key, idx))
     
-    # Überschüssige km auf andere Tage verteilen (proportional)
-    total_excess = sum(ex for _, _, ex, _, _ in flag_days)
-    total_ziel_km = sum(km for _, _, km in verteilungs_ziele)
+    dienstlich_ziele = []  # Für km_d: Tage mit km_d > 0, realistisch
+    privat_ziele = []      # Für km_p: alle Tage mit km_d > 0 oder km_p > 0
     
-    if total_ziel_km > 0:
-        for monat_key, idx, akt_km_d in verteilungs_ziele:
-            # Anteil dieses Tages an der Gesamtverteilung
-            anteil = akt_km_d / total_ziel_km
-            zusatz_km = int(total_excess * anteil)
-            if zusatz_km > 0:
-                old_km_d = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_d"])
-                generated_months_data[monat_key]["data"].at[idx, "km_d"] = old_km_d + zusatz_km
-                verteilte_km_gesamt += zusatz_km
+    for monat_key, data in generated_months_data.items():
+        df = data["data"]
+        for idx, row in df.iterrows():
+            if (monat_key, idx) in flag_indices:
+                continue
+            km_d = _safe_int(row.get("km_d"))
+            km_p = _safe_int(row.get("km_p"))
+            total_km = km_d + km_p
+            dauer_min = _safe_dauer_min(row.get("dauer"))
+            
+            if km_d > 0 and dauer_min > 0:
+                geschw = (total_km / dauer_min) * 60
+                if geschw < 75:  # Nur Tage mit Platz für mehr km_d
+                    dienstlich_ziele.append((monat_key, idx))
+            
+            if km_d > 0 or km_p > 0:  # Alle Tage mit Fahrten für km_p
+                privat_ziele.append((monat_key, idx))
     
-    # Abfahrt-Kilometerstände neu berechnen
+    # Phase 3: Überschüssige km verteilen
+    km_d_anteil = int(total_excess * 0.6)   # 60% als dienstlich
+    km_p_anteil = total_excess - km_d_anteil  # 40% als privat
+    verteilte_km = 0
+    
+    # km_d verteilen: gleichmäßig auf dienstliche Ziele, max +3 km pro Tag
+    if dienstlich_ziele and km_d_anteil > 0:
+        basis_pro_tag = max(km_d_anteil // len(dienstlich_ziele), 1)
+        rest = km_d_anteil
+        for monat_key, idx in dienstlich_ziele:
+            zusatz = min(basis_pro_tag, rest, 3)  # Max 3 km/Tag
+            if zusatz > 0:
+                old = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_d"])
+                generated_months_data[monat_key]["data"].at[idx, "km_d"] = old + zusatz
+                rest -= zusatz
+                verteilte_km += zusatz
+            if rest <= 0:
+                break
+        # Rest km_p verteilen
+        km_p_anteil += rest
+    
+    # km_p verteilen: gleichmäßig auf alle Ziele, max +5 km pro Tag
+    if privat_ziele and km_p_anteil > 0:
+        basis_pro_tag = max(km_p_anteil // len(privat_ziele), 1)
+        rest = km_p_anteil
+        for monat_key, idx in privat_ziele:
+            zusatz = min(basis_pro_tag, rest, 5)  # Max 5 km/Tag
+            if zusatz > 0:
+                old = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_p"])
+                generated_months_data[monat_key]["data"].at[idx, "km_p"] = old + zusatz
+                rest -= zusatz
+                verteilte_km += zusatz
+            if rest <= 0:
+                break
+    
+    # Phase 4: Abfahrt-Kilometerstände neu berechnen
     current_km_recalc = {}
     for _, row in fahrzeuge_df.iterrows():
         fz_id = _safe_int(row.get('id'), default=None)
@@ -562,7 +593,7 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
                 corrected_rows.append(row.to_dict())
         generated_months_data[monat_key]["data"] = pd.DataFrame(corrected_rows)
     
-    return generated_months_data, korrekturen, verteilte_km_gesamt
+    return generated_months_data, korrekturen, verteilte_km
     
 # ==========================================
 # 3. PDF GENERATOREN (KORRIGIERT)
@@ -1363,7 +1394,7 @@ if gen_btn:
             last_monat_key = (jahr, monate_zum_generieren[-1])
             st.session_state["fahrten_df"] = corrected_data[last_monat_key]["data"]
             save_fahrten_to_db(user, corrected_data)
-            st.success(f"🔧 Auto-Korrektur: {anz_korr} unrealistische Fahrt(en) korrigiert, {verteilte_km} km auf andere Tage verteilt.")
+            st.success(f"🔧 Auto-Korrektur: {anz_korr} unrealistische Fahrt(en) korrigiert, {verteilte_km} km über das Jahr verteilt (dienstl. + privat).")
             st.rerun()
 
 # ========= Anzeige, Bearbeitung & PDF =========
@@ -1382,7 +1413,7 @@ if df is not None:
                         st.session_state["fahrten_df"] = corrected_data[monat_key_akt]["data"]
                         df = st.session_state["fahrten_df"]
                     save_fahrten_to_db(user, corrected_data)
-                    st.success(f"🔧 Auto-Korrektur: {anz_korr} Fahrt(en) korrigiert, {verteilte_km} km verteilt.")
+                    st.success(f"🔧 Auto-Korrektur: {anz_korr} Fahrt(en) korrigiert, {verteilte_km} km über das Jahr verteilt (dienstl. + privat).")
     
     red_flags = scan_for_red_flags(df, jahr, monat)
     if red_flags:
