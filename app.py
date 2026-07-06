@@ -468,25 +468,34 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
     korrekturen = 0
     total_excess = 0
     
-    # Phase 1: Flag-Tage finden und km_d reduzieren
+    # Phase 1: Flag-Tage finden und km reduzieren (km_d ODER km_p)
     for monat_key, data in generated_months_data.items():
         df = data["data"]
         for idx, row in df.iterrows():
             km_d = _safe_int(row.get("km_d"))
             km_p = _safe_int(row.get("km_p"))
             total_km = km_d + km_p
-            if total_km <= 0 or km_d <= 0:
+            if total_km <= 0:
                 continue
             dauer_min = _safe_dauer_min(row.get("dauer"))
             if dauer_min <= 0:
                 continue
             geschwindigkeit = (total_km / dauer_min) * 60
             if geschwindigkeit > max_avg_speed:
-                realistic_km_d = max(int(dauer_min * max_avg_speed / 60), 1)
-                excess_km = km_d - realistic_km_d
+                realistic_total_km = int(dauer_min * max_avg_speed / 60)
+                excess_km = total_km - realistic_total_km
                 if excess_km > 0:
-                    generated_months_data[monat_key]["data"].at[idx, "km_d"] = realistic_km_d
-                    generated_months_data[monat_key]["data"].at[idx, "km_p"] = km_p
+                    if km_d > 0:
+                        # Dienstlich: km_d reduzieren, km_p lassen
+                        anteil_d = km_d / total_km
+                        new_km_d = max(int(realistic_total_km * anteil_d), 1)
+                        new_km_p = km_p
+                    else:
+                        # Nur Privat (Urlaub/Feiertag/Sonntag): km_p reduzieren
+                        new_km_d = 0
+                        new_km_p = max(realistic_total_km, 1)
+                    generated_months_data[monat_key]["data"].at[idx, "km_d"] = new_km_d
+                    generated_months_data[monat_key]["data"].at[idx, "km_p"] = new_km_p
                     total_excess += excess_km
                     korrekturen += 1
     
@@ -1258,7 +1267,9 @@ if gen_btn:
                         if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
                         else: km_p = rng.integers(5, 21)
                         route = "Feiertag"
-                    km_d = 0; start_hour = int(rng.integers(9, 18)); fahrzeit_min = int(rng.integers(15, 45))
+                    km_d = 0; start_hour = int(rng.integers(9, 18))
+                    fahrzeit_min = int(km_p / 70 * 60) + int(rng.integers(5, 15))  # Realistisch: km_p / 70 km/h + Puffer
+                    fahrzeit_min = max(fahrzeit_min, 15)  # Minimum 15 Min
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=start_hour); ank_dt = abf_dt + timedelta(minutes=fahrzeit_min)
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
             elif is_saturday:
@@ -1270,7 +1281,9 @@ if gen_btn:
             elif is_sunday:
                 if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
                 else: km_p = rng.integers(5, 21)
-                km_d = 0; route = "Sonntag"; start_hour = int(rng.integers(9, 18)); fahrzeit_min = int(rng.integers(15, 45))
+                km_d = 0; route = "Sonntag"; start_hour = int(rng.integers(9, 18))
+                fahrzeit_min = int(km_p / 70 * 60) + int(rng.integers(5, 15))  # Realistisch: km_p / 70 km/h + Puffer
+                fahrzeit_min = max(fahrzeit_min, 15)  # Minimum 15 Min
                 abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=start_hour); ank_dt = abf_dt + timedelta(minutes=fahrzeit_min)
                 abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
                 
