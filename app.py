@@ -1143,11 +1143,17 @@ if gen_btn:
                     for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
                     route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
                     
+                    # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
+                    fahrzeit_min = int((km_d + km_p) / 75 * 60)
+                    termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                    pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
+                    dauer_min = fahrzeit_min + termin_zeit_min + pause_min
+                    # Mindestens 3h (Normarbeitstag), max 22:00
+                    dauer_min = max(dauer_min, 180)
+                    dauer_min = min(dauer_min, 840)  # 14h max
                     start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    end_hour = int(rng.integers(17, 23)); end_minute = int(rng.integers(0, 60))
-                    ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
-                    dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
+                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
                     
                 elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
@@ -1159,11 +1165,17 @@ if gen_btn:
                     selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
                     km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
                     
+                    # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
+                    fahrzeit_min = int((km_d + km_p) / 75 * 60)
+                    termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                    pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
+                    dauer_min = fahrzeit_min + termin_zeit_min + pause_min
+                    # Mindestens 2.5h (kurzer Tag), max 22:00
+                    dauer_min = max(dauer_min, 150)
+                    dauer_min = min(dauer_min, 840)  # 14h max
                     start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    end_hour = int(rng.integers(17, 23)); end_minute = int(rng.integers(0, 60))
-                    ank_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=end_hour, minutes=end_minute)
-                    dauer_min = int((ank_dt - abf_dt).total_seconds() / 60)
+                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
 
             # KORREKTUR: Doppelte Zeile entfernt
