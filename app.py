@@ -532,7 +532,8 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
             
             if km_d > 0 and dauer_min > 0:
                 geschw = (total_km / dauer_min) * 60
-                if geschw < 75:  # Nur Tage mit Platz für mehr km_d
+                # FIX: Alle Tage unter max_avg_speed (100) aufnehmen, nicht nur < 75
+                if geschw < max_avg_speed:
                     dienstlich_ziele.append((monat_key, idx))
             
             if km_d > 0 or km_p > 0:  # Alle Tage mit Fahrten für km_p
@@ -543,12 +544,14 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
     km_p_anteil = total_excess - km_d_anteil  # 40% als privat
     verteilte_km = 0
     
-    # km_d verteilen: gleichmäßig auf dienstliche Ziele, max +3 km pro Tag
+    # km_d verteilen: dynamisches Limit basierend auf Überschuss (Fix: alte Limits +3/+5 waren zu restriktiv)
     if dienstlich_ziele and km_d_anteil > 0:
+        # Dynamisches Limit: evenly verteilen, aber max 10 km/Tag (audi-sicher)
+        max_per_day_d = max(3, min(km_d_anteil // len(dienstlich_ziele) + 1, 10))
         basis_pro_tag = max(km_d_anteil // len(dienstlich_ziele), 1)
         rest = km_d_anteil
         for monat_key, idx in dienstlich_ziele:
-            zusatz = min(basis_pro_tag, rest, 3)  # Max 3 km/Tag
+            zusatz = min(basis_pro_tag, rest, max_per_day_d)
             if zusatz > 0:
                 old = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_d"])
                 generated_months_data[monat_key]["data"].at[idx, "km_d"] = old + zusatz
@@ -559,12 +562,13 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
         # Rest km_p verteilen
         km_p_anteil += rest
     
-    # km_p verteilen: gleichmäßig auf alle Ziele, max +5 km pro Tag
+    # km_p verteilen: dynamisches Limit
     if privat_ziele and km_p_anteil > 0:
+        max_per_day_p = max(5, min(km_p_anteil // len(privat_ziele) + 1, 8))
         basis_pro_tag = max(km_p_anteil // len(privat_ziele), 1)
         rest = km_p_anteil
         for monat_key, idx in privat_ziele:
-            zusatz = min(basis_pro_tag, rest, 5)  # Max 5 km/Tag
+            zusatz = min(basis_pro_tag, rest, max_per_day_p)
             if zusatz > 0:
                 old = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_p"])
                 generated_months_data[monat_key]["data"].at[idx, "km_p"] = old + zusatz
@@ -572,6 +576,53 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
                 verteilte_km += zusatz
             if rest <= 0:
                 break
+    
+    # Phase 3.5: Nachverteillung prüfen – falls durch Verteilung neue Speed-Flags entstanden
+    new_flag_indices = set()
+    for monat_key, data in generated_months_data.items():
+        df = data["data"]
+        for idx, row in df.iterrows():
+            km_d = _safe_int(row.get("km_d"))
+            km_p = _safe_int(row.get("km_p"))
+            total_km = km_d + km_p
+            if total_km > 0:
+                dauer_min = _safe_dauer_min(row.get("dauer"))
+                if dauer_min > 0:
+                    geschw = (total_km / dauer_min) * 60
+                    if geschw > max_avg_speed:
+                        new_flag_indices.add((monat_key, idx))
+    if new_flag_indices:
+        # Neue Flags durch Verteilung: km_d auf diesen Tagen reduzieren und Rest als km_p hinzufügen
+        extra_to_redistribute = 0
+        for monat_key, idx in new_flag_indices:
+            km_d = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_d"])
+            km_p = _safe_int(generated_months_data[monat_key]["data"].at[idx, "km_p"])
+            dauer_min = _safe_dauer_min(generated_months_data[monat_key]["data"].at[idx, "dauer"])
+            if dauer_min > 0:
+                max_total = int(dauer_min * max_avg_speed / 60)
+                current_total = km_d + km_p
+                if current_total > max_total:
+                    excess = current_total - max_total
+                    # km_d reduzieren
+                    if km_d > 0:
+                        reduction = min(excess, km_d)
+                        generated_months_data[monat_key]["data"].at[idx, "km_d"] = km_d - reduction
+                        extra_to_redistribute += reduction
+        # Redistribute als km_p auf Tage ohne Flags (kleine Beträge)
+        if extra_to_redistribute > 0:
+            safe_targets = [(mk, i) for mk, i in privat_ziele if (mk, i) not in new_flag_indices and (mk, i) not in flag_indices]
+            if safe_targets:
+                per_day = max(extra_to_redistribute // len(safe_targets), 1)
+                rest = extra_to_redistribute
+                for mk, i in safe_targets:
+                    zusatz = min(per_day, rest, 3)
+                    if zusatz > 0:
+                        old = _safe_int(generated_months_data[mk]["data"].at[i, "km_p"])
+                        generated_months_data[mk]["data"].at[i, "km_p"] = old + zusatz
+                        rest -= zusatz
+                        verteilte_km += zusatz
+                    if rest <= 0:
+                        break
     
     # Phase 4: Abfahrt-Kilometerstände neu berechnen
     current_km_recalc = {}
@@ -1582,6 +1633,29 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                 if calculated_start_km_hu_day > start_km:
                                     scaling_factor = target_km_span / (calculated_start_km_hu_day - start_km); st.write(f"    - Skalierungsfaktor: {scaling_factor:.4f}")
                                     trips_before_hu['km_d'] = (trips_before_hu['km_d'] * scaling_factor).astype(int); trips_before_hu['km_p'] = (trips_before_hu['km_p'] * scaling_factor).astype(int)
+                                    # FIX: Auch Dauer proportional skalieren, damit Geschwindigkeit plausibel bleibt
+                                    def _scale_dauer(dauer_str, factor):
+                                        try:
+                                            parts = str(dauer_str).split(':')
+                                            if len(parts) != 2: return dauer_str
+                                            total_min = int(parts[0]) * 60 + int(parts[1])
+                                            if total_min <= 0: return dauer_str
+                                            new_min = int(total_min * factor)
+                                            new_min = min(new_min, 840)  # Max 14h
+                                            return f"{new_min // 60:02d}:{new_min % 60:02d}"
+                                        except: return dauer_str
+                                    def _recalc_ankunft(row):
+                                        try:
+                                            abf_parts = str(row['abf']).split(':')
+                                            dur_parts = str(row['dauer']).split(':')
+                                            abf_min = int(abf_parts[0]) * 60 + int(abf_parts[1])
+                                            dur_min = int(dur_parts[0]) * 60 + int(dur_parts[1])
+                                            ank_min = abf_min + dur_min
+                                            ank_min = min(ank_min, 1320)  # Max 22:00
+                                            return f"{ank_min // 60:02d}:{ank_min % 60:02d}"
+                                        except: return row['ank']
+                                    trips_before_hu['dauer'] = trips_before_hu['dauer'].apply(lambda d: _scale_dauer(d, scaling_factor))
+                                    trips_before_hu['ank'] = trips_before_hu.apply(_recalc_ankunft, axis=1)
                                 else: st.write("    - Keine Skalierung notwendig.")
                                 for index, corrected_trip in trips_before_hu.iterrows():
                                     _dt = pd.Timestamp(corrected_trip['datum'])
@@ -1593,6 +1667,8 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                     original_trip_index = _orig_match[0]
                                     st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'km_d'] = corrected_trip['km_d']
                                     st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'km_p'] = corrected_trip['km_p']
+                                    st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'dauer'] = corrected_trip['dauer']
+                                    st.session_state["generated_months_data"][monat_key]["data"].at[original_trip_index, 'ank'] = corrected_trip['ank']
 
                             st.write(f"  - Erstelle/Ersetze Fahrt am {hu_date.strftime('%d.%m.%Y')} mit neuer Logik.")
                             hu_month_key = (hu_date.year, hu_date.month); hu_month_df = st.session_state["generated_months_data"][hu_month_key]["data"]
