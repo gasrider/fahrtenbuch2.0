@@ -25,6 +25,8 @@ try:
 except Exception:
     REPORTLAB_OK = False
 
+st.set_page_config(page_title="Fahrtenbuch Generator v6.0 - Multi-User Edition", layout="wide")
+
 def send_reset_email(to_email, new_plain_password, smtp_settings=None):
     """Sendet eine Passwort-Reset-E-Mail. Lädt SMTP-Einstellungen aus DB (Fallback: env vars)."""
     try:
@@ -103,6 +105,8 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def add_user(username, password, email):
     clean_username = username.strip().lower()
+    # SICHERHEITSHINWEIS: SHA256 ohne Salt ist nicht empfohlen fuer Passwort-Hashing.
+    # Besser: bcrypt oder argon2 verwenden. Erfordert jedoch DB-Migration.
     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
     try: 
         # KORREKTUR: force_pw_change auf True gesetzt bei Registrierung
@@ -125,12 +129,27 @@ def _safe_float(val, default=0.0):
     if val is None:
         return default
     if isinstance(val, (int, float)):
-        return float(val) if not (isinstance(val, float) and (np.isnan(val) if hasattr(np, 'isnan') else False)) else default
+        if isinstance(val, float):
+            try:
+                if np.isnan(val):
+                    return default
+            except (TypeError, ValueError):
+                pass
+        return float(val)
     if hasattr(val, 'item'):  # numpy/pandas scalar
-        v = val.item()
-        if v is None or (isinstance(v, float) and np.isnan(v)):
+        try:
+            v = val.item()
+            if v is None:
+                return default
+            if isinstance(v, float):
+                try:
+                    if np.isnan(v):
+                        return default
+                except (TypeError, ValueError):
+                    pass
+            return float(v)
+        except (TypeError, ValueError):
             return default
-        return float(v)
     s = str(val).strip().replace(',', '.')
     if s in ("", "none", "nan", "nat"):
         return default
@@ -449,7 +468,8 @@ def scan_for_red_flags(df, jahr, monat):
                     geschwindigkeit = (total_km / dauer_min) * 60
                     if geschwindigkeit > 130:
                         flags.append(f"🚨 {datum_str}: Unrealistische Geschwindigkeit! {total_km} km in {row['dauer']} Std. (~{geschwindigkeit:.0f} km/h).")
-            except: pass
+            except (ValueError, TypeError, KeyError):
+                pass
             
         if total_km == 0 and not is_ignore_route(row["route"]):
             flags.append(f"🚨 {datum_str}: Eine Dienstreise ('{str(row['route'])[:30]}...') wurde eingetragen, aber es stehen 0 km drin!")
@@ -461,7 +481,8 @@ def scan_for_red_flags(df, jahr, monat):
             ank_min = ank_h * 60 + ank_m
             if ank_min < abf_min and total_km > 0:
                 flags.append(f"🚨 {datum_str}: Ankunft ({row['ank']}) ist vor der Abfahrt ({row['abf']} Uhr) eingetragen!")
-        except: pass
+        except (ValueError, TypeError, KeyError):
+            pass
 
     for datum, group in df.groupby("datum"):
         if len(group) > 1:
@@ -932,7 +953,6 @@ def create_jahres_pdf(generated_data, jahr, user_info, fahrzeuge_df):
 # ==========================================
 # 4. STREAMLIT APP & LOGIK
 # ==========================================
-st.set_page_config(page_title="Fahrtenbuch Generator v6.0 - Multi-User Edition", layout="wide")
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False; st.session_state['username'] = ""
 
@@ -1254,7 +1274,7 @@ if gen_btn:
 
     # WARNUNG: Prüfen ob überhaupt Zeiträume das gewählte Jahr abdecken
     _jahr_str = str(jahr)
-    _deckt_jahr_ab = any(v[:4] <= _jahr_str <= b[:4] for v, b, _ in _zeitraum_liste)
+    _deckt_jahr_ab = any(int(v[:4]) <= jahr <= int(b[:4]) for v, b, _ in _zeitraum_liste)
     if not _deckt_jahr_ab:
         st.error(f"⚠️ Kein Zeitraum deckt das Jahr {jahr} ab! Bitte die Zeiträume (von/bis) auf {jahr} aktualisieren, sonst werden keine Fahrzeuge zugewiesen.")
         st.stop()
@@ -1273,7 +1293,7 @@ if gen_btn:
     for i, monat_key in enumerate(monate_zum_generieren):
         progress_bar.progress((i + 1) / len(monate_zum_generieren), text=f"Generiere Monat {monat_key} von {monate_zum_generieren[-1]}...")
         tage = pd.date_range(date(jahr, monat_key, 1), date(jahr, monat_key, calendar.monthrange(jahr, monat_key)[1]), freq="D")
-        out = []; hol = austria_holidays(jahr)
+        out = []
         prob_dienstfahrt_feiertag_urlaub = st.session_state.get('wahrscheinlichkeit_dienstfahrt_feiertag_urlaub', 5) / 100.0
         special_trip_done_this_week = False
 
@@ -1311,8 +1331,8 @@ if gen_btn:
 
             if is_holiday or is_vacation:
                 if rng.random() < prob_dienstfahrt_feiertag_urlaub:
-                    num_stops = rng.integers(1, 3); selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]
-                    km_d = rng.integers(15, 25) + sum(rng.integers(10, 25) for _ in range(num_stops)); km_p = 0
+                    num_stops = int(rng.integers(1, 3)); selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]
+                    km_d = int(rng.integers(15, 25)) + sum(int(rng.integers(10, 25)) for _ in range(num_stops)); km_p = 0
                     prefix = "Feiertag: " if is_holiday else "Urlaub: "; route = prefix + " - ".join(full_route)
                     fahrzeit_min = int(km_d / 80 * 60)
                     pause_min = int(rng.integers(20, 60))
@@ -1324,18 +1344,22 @@ if gen_btn:
                 else:
                     if is_vacation:
                         urlaub_fahrzeug_name = st.session_state.get('urlaub_fahrzeug', ''); urlaub_fahrzeug_id = fahrzeug_optionen.get(urlaub_fahrzeug_name, None)
-                        if urlaub_fahrzeug_id is not None and urlaub_fahrzeug_id in gueltige_fahrzeuge_am_tag:
+                        if urlaub_fahrzeug_id is not None and gueltige_fahrzeuge_am_tag and urlaub_fahrzeug_id in gueltige_fahrzeuge_am_tag:
                             fahrzeug_id = urlaub_fahrzeug_id
                             _urlaub_match = fahrzeuge_df[fahrzeuge_df["id"] == fahrzeug_id]["bezeichnung"]
                             fahrzeug_name = _urlaub_match.values[0] if len(_urlaub_match) > 0 else "Unbekannt"
-                            km_p = rng.integers(st.session_state.get('urlaub_km_min', 30), st.session_state.get('urlaub_km_max', 80)); route = f"Urlaub"
+                            km_p = int(rng.integers(st.session_state.get('urlaub_km_min', 30), st.session_state.get('urlaub_km_max', 80))); route = f"Urlaub"
                         else:
-                            if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
-                            else: km_p = rng.integers(5, 21)
+                            if fahrzeug_id in privat_km_ranges:
+                                km_p = int(rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1]))
+                            else:
+                                km_p = int(rng.integers(5, 21))
                             route = "Urlaub (Urlaubs-FZ nicht verfügbar)"
                     else:
-                        if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
-                        else: km_p = rng.integers(5, 21)
+                        if fahrzeug_id in privat_km_ranges:
+                            km_p = int(rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1]))
+                        else:
+                            km_p = int(rng.integers(5, 21))
                         route = "Feiertag"
                     km_d = 0; start_hour = int(rng.integers(9, 18))
                     fahrzeit_min = int(km_p / 70 * 60) + int(rng.integers(5, 15))  # Realistisch: km_p / 70 km/h + Puffer
@@ -1344,13 +1368,15 @@ if gen_btn:
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
             elif is_saturday:
                 if rng.random() < 0.4:
-                    km_d = rng.integers(25, 55); km_p = 0; num_stops = rng.integers(1, 2); selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
+                    km_d = int(rng.integers(25, 55)); km_p = 0; num_stops = int(rng.integers(1, 2)); selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
                     fahrzeit_min = int(km_d / 80 * 60); pause_min = int(rng.integers(15, 30)); dauer_min = fahrzeit_min + pause_min
                     abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=9); ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
                     abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
             elif is_sunday:
-                if fahrzeug_id in privat_km_ranges: km_p = rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1])
-                else: km_p = rng.integers(5, 21)
+                if fahrzeug_id in privat_km_ranges:
+                    km_p = int(rng.integers(privat_km_ranges[fahrzeug_id][0], privat_km_ranges[fahrzeug_id][1]))
+                else:
+                    km_p = int(rng.integers(5, 21))
                 km_d = 0; route = "Sonntag"; start_hour = int(rng.integers(9, 18))
                 fahrzeit_min = int(km_p / 70 * 60) + int(rng.integers(5, 15))  # Realistisch: km_p / 70 km/h + Puffer
                 fahrzeit_min = max(fahrzeit_min, 15)  # Minimum 15 Min
@@ -1366,9 +1392,9 @@ if gen_btn:
                     # Fahrzeug wird heute PRIVAT genutzt (Arbeitsfahrt als Privatfahrt)
                     km_d = 0
                     if fz_id_int in privat_km_ranges:
-                        km_p = rng.integers(privat_km_ranges[fz_id_int][0], privat_km_ranges[fz_id_int][1])
+                        km_p = int(rng.integers(privat_km_ranges[fz_id_int][0], privat_km_ranges[fz_id_int][1]))
                     else:
-                        km_p = rng.integers(5, 21)
+                        km_p = int(rng.integers(5, 21))
                     # Abwechslung: Arbeitsweg oder reine Privatifahrt
                     if rng.random() < 0.4:
                         route = f"{wohnort_clean} - {dienstort_clean} (Arbeitsweg)"
@@ -1387,13 +1413,13 @@ if gen_btn:
                 
                     if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
                         special_trip_done_this_week = True; km_p = _safe_int(user_info.get('entfernung'), default=25); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
-                        num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
+                        num_stops = int(rng.integers(1, 4)); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
                         for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
-                        route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
+                        route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(int(rng.integers(15, 35)) for _ in range(num_stops))
                         
                         # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
                         fahrzeit_min = int((km_d + km_p) / 75 * 60)
-                        termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                        termin_zeit_min = int(num_stops * int(rng.integers(25, 45)))
                         pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
                         dauer_min = fahrzeit_min + termin_zeit_min + pause_min
                         # Mindestens 3h (Normarbeitstag), max 22:00
@@ -1406,16 +1432,16 @@ if gen_btn:
                         
                     elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
                         prob = wahrscheinlichkeit_dienstfahrt_werktag
-                        if prob >= 90: num_stops = rng.integers(1, 3)
-                        elif prob >= 70: num_stops = rng.integers(1, 4)
-                        elif prob >= 50: num_stops = rng.integers(2, 4)
-                        else: num_stops = rng.integers(2, 5)
+                        if prob >= 90: num_stops = int(rng.integers(1, 3))
+                        elif prob >= 70: num_stops = int(rng.integers(1, 4))
+                        elif prob >= 50: num_stops = int(rng.integers(2, 4))
+                        else: num_stops = int(rng.integers(2, 5))
                         selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
-                        km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
+                        km_d = sum(int(rng.integers(15, 35)) for _ in range(num_stops)); km_p = 0
                         
                         # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
                         fahrzeit_min = int((km_d + km_p) / 75 * 60)
-                        termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                        termin_zeit_min = int(num_stops * int(rng.integers(25, 45)))
                         pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
                         dauer_min = fahrzeit_min + termin_zeit_min + pause_min
                         # Mindestens 2.5h (kurzer Tag), max 22:00
@@ -1538,7 +1564,8 @@ if df is not None:
         if st.button("💾 Änderungen für diesen Monat in der Cloud speichern"):
             edited_df = edited_df.sort_values(by="datum").reset_index(drop=True)
             update_month_in_db(user, jahr, monat, edited_df)
-            st.session_state["generated_months_data"][(jahr, monat)]["data"] = edited_df
+            if (jahr, monat) in st.session_state["generated_months_data"]:
+                st.session_state["generated_months_data"][(jahr, monat)]["data"] = edited_df
             st.session_state["fahrten_df"] = edited_df
             st.toast("Änderungen erfolgreich gespeichert!", icon="✅")
             st.rerun()
@@ -1568,7 +1595,7 @@ if df is not None:
                     h2, m2 = map(int, new_ank.split(':'))
                     dauer_min = (h2*60 + m2) - (h1*60 + m1)
                     dauer_str = f"{dauer_min//60:02d}:{dauer_min%60:02d}"
-                except: dauer_str = "00:00"
+                except (ValueError, TypeError, AttributeError): dauer_str = "00:00"
                 
                 fz_row = fahrzeuge_df[fahrzeuge_df['bezeichnung'] == new_fzg]
                 fz_id = fz_row['id'].values[0] if not fz_row.empty else 1
@@ -1732,7 +1759,7 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                                 return rng.choice(["Angebot", "Schaden", "KB"])
 
                             total_stops = len(stopps_vor_hu) + 1 + len(stopps_nach_hu)
-                            hu_km_d_total = rng.integers(20, 40) + total_stops * rng.integers(10, 20)
+                            hu_km_d_total = int(rng.integers(20, 40)) + total_stops * int(rng.integers(10, 20))
 
                             # Route aufbauen: Wohnort → Kundenstopps VOR HU → Werkstatt (HU) → Kundenstopps NACH HU → Wohnort
                             route_parts = [wohnort_clean]
@@ -1763,7 +1790,7 @@ if st.session_state.get("generated_months_data") and len(st.session_state["gener
                             else: st.error(f"    - FEHLER: Konnte keinen Eintrag für den {hu_date.strftime('%d.%m.%Y')} finden. Überspringe Korrektur.")
 
                         with st.spinner("Berechne alle Abfahrts-Kilometerstände neu..."):
-                            current_km_recalc = {row['id']: row['start_km_vorjahr'] for _, row in fahrzeuge_df.iterrows()}
+                            current_km_recalc = {row['id']: _safe_int(row.get('start_km_vorjahr')) for _, row in fahrzeuge_df.iterrows()}
                             sortierte_monate = sorted(st.session_state["generated_months_data"].keys())
                             for monat_key in sortierte_monate:
                                 data = st.session_state["generated_months_data"][monat_key]; df = data["data"].sort_values(by="datum").reset_index(drop=True)
@@ -1883,9 +1910,11 @@ if user in ADMIN_USERS:
                        "Änderungen erfordern eine Anpassung in der Deployment-Konfiguration und einen Neustart der App.")
 
             supabase_url_display = os.environ.get("SUPABASE_URL", "(nicht gesetzt)")
-            supabase_key_display = os.environ.get("SUPABASE_KEY", "(nicht gesetzt)")
-            if supabase_key_display != "(nicht gesetzt)" and len(supabase_key_display) > 10:
-                supabase_key_display = supabase_key_display[:6] + "••••••••" + supabase_key_display[-4:]
+            _raw_key = os.environ.get("SUPABASE_KEY", "")
+            if _raw_key and len(_raw_key) > 10:
+                supabase_key_display = _raw_key[:6] + "••••••••" + _raw_key[-4:]
+            else:
+                supabase_key_display = "(nicht gesetzt)"
 
             col_s1, col_s2 = st.columns(2)
             with col_s1:
