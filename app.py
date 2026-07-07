@@ -540,14 +540,14 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
                 privat_ziele.append((monat_key, idx))
     
     # Phase 3: Überschüssige km verteilen
-    km_d_anteil = int(total_excess * 0.6)   # 60% als dienstlich
-    km_p_anteil = total_excess - km_d_anteil  # 40% als privat
+    km_d_anteil = int(total_excess * 0.10)   # Nur 10% als dienstlich (wenig auffällig)
+    km_p_anteil = total_excess - km_d_anteil  # 90% als privat (natürlicher)
     verteilte_km = 0
     
     # km_d verteilen: dynamisches Limit basierend auf Überschuss (Fix: alte Limits +3/+5 waren zu restriktiv)
     if dienstlich_ziele and km_d_anteil > 0:
-        # Dynamisches Limit: evenly verteilen, aber max 10 km/Tag (audi-sicher)
-        max_per_day_d = max(3, min(km_d_anteil // len(dienstlich_ziele) + 1, 10))
+        # Dynamisches Limit: evenly verteilen, aber max 5 km/Tag (audi-sicher, wenig auffällig)
+        max_per_day_d = max(2, min(km_d_anteil // len(dienstlich_ziele) + 1, 5))
         basis_pro_tag = max(km_d_anteil // len(dienstlich_ziele), 1)
         rest = km_d_anteil
         for monat_key, idx in dienstlich_ziele:
@@ -564,7 +564,7 @@ def auto_correct_red_flags(generated_months_data, fahrzeuge_df, max_avg_speed=10
     
     # km_p verteilen: dynamisches Limit
     if privat_ziele and km_p_anteil > 0:
-        max_per_day_p = max(5, min(km_p_anteil // len(privat_ziele) + 1, 8))
+        max_per_day_p = max(5, min(km_p_anteil // len(privat_ziele) + 1, 12))
         basis_pro_tag = max(km_p_anteil // len(privat_ziele), 1)
         rest = km_p_anteil
         for monat_key, idx in privat_ziele:
