@@ -215,17 +215,32 @@ def save_fahrzeuge(username, df):
                 "kennzeichen": str(row.get("kennzeichen", "")).strip() if row.get("kennzeichen") is not None and str(row.get("kennzeichen")).strip().lower() not in ("none", "nan") else "",
                 "start_km_vorjahr": _safe_int(row.get("start_km_vorjahr")),
                 "privat_km_min": _safe_int(row.get("privat_km_min")),
-                "privat_km_max": _safe_int(row.get("privat_km_max"))
+                "privat_km_max": _safe_int(row.get("privat_km_max")),
+                "dienstlich_quote": _safe_int(row.get("dienstlich_quote"), default=90),
             }
             clean_insert.append(clean_row)
-        if clean_insert: supabase.table("fahrzeuge").insert(clean_insert).execute()
+        if clean_insert:
+            try:
+                supabase.table("fahrzeuge").insert(clean_insert).execute()
+            except Exception as e:
+                # Fallback: dienstlich_quote Spalte existiert vielleicht noch nicht in DB
+                if "dienstlich_quote" in str(e):
+                    fallback_insert = [{k: v for k, v in r.items() if k != "dienstlich_quote"} for r in clean_insert]
+                    supabase.table("fahrzeuge").insert(fallback_insert).execute()
+                    st.warning("Hinweis: Die Spalte 'dienstlich_quote' wurde noch nicht in der Datenbank angelegt. Bitte füge sie der Tabelle 'fahrzeuge' hinzu (INTEGER, Default 90).")
+                else:
+                    raise
     except Exception as e:
         st.error(f"Fehler beim Speichern der Fahrzeuge: {getattr(e, 'message', str(e))}")
 
 def load_fahrzeuge(username):
     response = supabase.table("fahrzeuge").select("*").eq("username", username).order("id").execute()
-    if response.data: return pd.DataFrame(response.data)
-    return pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max"])
+    if response.data:
+        df = pd.DataFrame(response.data)
+        if "dienstlich_quote" not in df.columns:
+            df["dienstlich_quote"] = 90
+        return df
+    return pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max", "dienstlich_quote"])
 
 def save_zeitraeume(username, df):
     try:
@@ -1144,9 +1159,11 @@ def process_fahrzeuge(file):
         df["start_km_vorjahr"] = df["start_km_vorjahr"].where(df["start_km_vorjahr"] != 0, df["_endkm_vals"])
         df.drop(columns=["_endkm_vals"], inplace=True, errors="ignore")
     df = coalesce(df, ["privat_km_min", "privatkmmin", "min_privat_km"], "privat_km_min"); df = coalesce(df, ["privat_km_max", "privatkmmax", "max_privat_km"], "privat_km_max")
+    df = coalesce(df, ["dienstlich_quote", "dienstlichquote", "dienstl_quote", "nutzungsprofil"], "dienstlich_quote")
     if "privat_km_min" not in df.columns: df["privat_km_min"] = 5  
     if "privat_km_max" not in df.columns: df["privat_km_max"] = 20 
-    df["id"] = pd.to_numeric(df["id"], errors="coerce").astype("Int64"); df["start_km_vorjahr"] = pd.to_numeric(df["start_km_vorjahr"], errors="coerce").fillna(0).astype(int); df["privat_km_min"] = pd.to_numeric(df["privat_km_min"], errors="coerce").fillna(5).astype(int); df["privat_km_max"] = pd.to_numeric(df["privat_km_max"], errors="coerce").fillna(20).astype(int)
+    if "dienstlich_quote" not in df.columns: df["dienstlich_quote"] = 90
+    df["id"] = pd.to_numeric(df["id"], errors="coerce").astype("Int64"); df["start_km_vorjahr"] = pd.to_numeric(df["start_km_vorjahr"], errors="coerce").fillna(0).astype(int); df["privat_km_min"] = pd.to_numeric(df["privat_km_min"], errors="coerce").fillna(5).astype(int); df["privat_km_max"] = pd.to_numeric(df["privat_km_max"], errors="coerce").fillna(20).astype(int); df["dienstlich_quote"] = pd.to_numeric(df["dienstlich_quote"], errors="coerce").fillna(90).astype(int)
     return df
 
 def process_zeitraeume(file, fahrzeuge_df):
@@ -1177,7 +1194,7 @@ if kw_xlsx is not None:
     if "zweck" in df.columns: df.rename(columns={"zweck": "Zweck"}, inplace=True)
     keywords = df; st.info("✅ Keywords werden aus der hochgeladenen Excel-Datei verwendet.")
 
-if fahrzeuge_df.empty: fahrzeuge_df = pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max"])
+if fahrzeuge_df.empty: fahrzeuge_df = pd.DataFrame(columns=["id", "bezeichnung", "kennzeichen", "start_km_vorjahr", "privat_km_min", "privat_km_max", "dienstlich_quote"])
 if zeitraeume_df.empty: zeitraeume_df = pd.DataFrame(columns=["fahrzeug_id", "von", "bis"])
 
 # ========= Editors =========
@@ -1224,6 +1241,8 @@ if gen_btn:
     progress_bar = st.progress(0, text="Generiere Fahrten...")
     current_km = {row['id']: _safe_int(row.get('start_km_vorjahr')) for _, row in fahrzeuge_df.iterrows()}
     privat_km_ranges = {row['id']: (_safe_int(row.get('privat_km_min'), default=5), _safe_int(row.get('privat_km_max'), default=20)) for _, row in fahrzeuge_df.iterrows()}
+    # NEU: Pro-Fahrzeug dienstlich_quote (0-100%): Wahrscheinlichkeit dass ein Arbeitstag dienstlich wird
+    dienstlich_quotes = {row['id']: max(0, min(100, _safe_int(row.get('dienstlich_quote'), default=90))) for _, row in fahrzeuge_df.iterrows()}
     rng = np.random.default_rng()  # Ein RNG für alles (kein Neustart pro Monat)
 
     # VORAB: Zeiträume in reine Python-Listen konvertieren (vermeidet Arrow/Typ-Probleme beim Vergleich)
@@ -1339,48 +1358,73 @@ if gen_btn:
                 abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
                 
             else:
-                current_week = t.isocalendar()[1]; target_day_for_tour = 0 if current_week % 2 == 1 else 1
+                # ===== WERKTAG: dienstlich_quote des gewählten Fahrzeugs prüfen =====
+                fz_dienstlich_quote = dienstlich_quotes.get(fz_id_int, 90) / 100.0
+                is_dienstlich_today = rng.random() < fz_dienstlich_quote
+
+                if not is_dienstlich_today:
+                    # Fahrzeug wird heute PRIVAT genutzt (Arbeitsfahrt als Privatfahrt)
+                    km_d = 0
+                    if fz_id_int in privat_km_ranges:
+                        km_p = rng.integers(privat_km_ranges[fz_id_int][0], privat_km_ranges[fz_id_int][1])
+                    else:
+                        km_p = rng.integers(5, 21)
+                    # Abwechslung: Arbeitsweg oder reine Privatifahrt
+                    if rng.random() < 0.4:
+                        route = f"{wohnort_clean} - {dienstort_clean} (Arbeitsweg)"
+                    else:
+                        route = "Privatfahrt"
+                    fahrzeit_min = int(km_p / 70 * 60) + int(rng.integers(5, 15))
+                    fahrzeit_min = max(fahrzeit_min, 15)
+                    start_minute = int(np.clip(rng.normal(480, 10), 450, 540))
+                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                    ank_dt = abf_dt + timedelta(minutes=fahrzeit_min)
+                    abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{fahrzeit_min // 60:02d}:{fahrzeit_min % 60:02d}"
+
+                else:
+                    # Fahrzeug wird heute DIENSTLICH genutzt (normale Logik)
+                    current_week = t.isocalendar()[1]; target_day_for_tour = 0 if current_week % 2 == 1 else 1
                 
-                if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
-                    special_trip_done_this_week = True; km_p = _safe_int(user_info.get('entfernung'), default=25); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
-                    num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
-                    for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
-                    route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
-                    
-                    # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
-                    fahrzeit_min = int((km_d + km_p) / 75 * 60)
-                    termin_zeit_min = int(num_stops * rng.integers(25, 45))
-                    pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
-                    dauer_min = fahrzeit_min + termin_zeit_min + pause_min
-                    # Mindestens 3h (Normarbeitstag), max 22:00
-                    dauer_min = max(dauer_min, 180)
-                    dauer_min = min(dauer_min, 840)  # 14h max
-                    start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
-                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
-                    abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
-                    
-                elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
-                    prob = wahrscheinlichkeit_dienstfahrt_werktag
-                    if prob >= 90: num_stops = rng.integers(1, 3)
-                    elif prob >= 70: num_stops = rng.integers(1, 4)
-                    elif prob >= 50: num_stops = rng.integers(2, 4)
-                    else: num_stops = rng.integers(2, 5)
-                    selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
-                    km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
-                    
-                    # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
-                    fahrzeit_min = int((km_d + km_p) / 75 * 60)
-                    termin_zeit_min = int(num_stops * rng.integers(25, 45))
-                    pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
-                    dauer_min = fahrzeit_min + termin_zeit_min + pause_min
-                    # Mindestens 2.5h (kurzer Tag), max 22:00
-                    dauer_min = max(dauer_min, 150)
-                    dauer_min = min(dauer_min, 840)  # 14h max
-                    start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
-                    abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
-                    ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
-                    abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
+                    if t.weekday() == target_day_for_tour and not special_trip_done_this_week:
+                        special_trip_done_this_week = True; km_p = _safe_int(user_info.get('entfernung'), default=25); route_parts = [wohnort_clean, f"{dienstort_clean} (Büro)"]
+                        num_stops = rng.integers(1, 4); selected_keywords = keywords.sample(min(num_stops, len(keywords)))
+                        for _, r in selected_keywords.iterrows(): route_parts.append(f"{r['Ort']} ({r['Zweck']})")
+                        route_parts.append(wohnort_clean); route = " - ".join(route_parts); km_d = int(km_p) + sum(rng.integers(15, 35) for _ in range(num_stops))
+                        
+                        # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
+                        fahrzeit_min = int((km_d + km_p) / 75 * 60)
+                        termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                        pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
+                        dauer_min = fahrzeit_min + termin_zeit_min + pause_min
+                        # Mindestens 3h (Normarbeitstag), max 22:00
+                        dauer_min = max(dauer_min, 180)
+                        dauer_min = min(dauer_min, 840)  # 14h max
+                        start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
+                        abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                        ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                        abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
+                        
+                    elif rng.random() < (wahrscheinlichkeit_dienstfahrt_werktag / 100.0):
+                        prob = wahrscheinlichkeit_dienstfahrt_werktag
+                        if prob >= 90: num_stops = rng.integers(1, 3)
+                        elif prob >= 70: num_stops = rng.integers(1, 4)
+                        elif prob >= 50: num_stops = rng.integers(2, 4)
+                        else: num_stops = rng.integers(2, 5)
+                        selected_keywords = keywords.sample(min(num_stops, len(keywords))); route_stops = [f"{r['Ort']} ({r['Zweck']})" for _, r in selected_keywords.iterrows()]; full_route = [wohnort_clean] + route_stops + [wohnort_clean]; route = " - ".join(full_route)
+                        km_d = sum(rng.integers(15, 35) for _ in range(num_stops)); km_p = 0
+                        
+                        # Realistische Dauer: Fahrzeit + Terminzeit pro Stopp + Pausen
+                        fahrzeit_min = int((km_d + km_p) / 75 * 60)
+                        termin_zeit_min = int(num_stops * rng.integers(25, 45))
+                        pause_min = int(rng.integers(15, 30)) if num_stops >= 3 else (int(rng.integers(5, 15)) if num_stops >= 2 else 0)
+                        dauer_min = fahrzeit_min + termin_zeit_min + pause_min
+                        # Mindestens 2.5h (kurzer Tag), max 22:00
+                        dauer_min = max(dauer_min, 150)
+                        dauer_min = min(dauer_min, 840)  # 14h max
+                        start_minute = int(np.clip(rng.normal(480, 5), 470, 490)) 
+                        abf_dt = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=start_minute)
+                        ank_dt = abf_dt + timedelta(minutes=int(dauer_min))
+                        abf = abf_dt.strftime("%H:%M"); ank = ank_dt.strftime("%H:%M"); dauer = f"{dauer_min // 60:02d}:{dauer_min % 60:02d}"
 
             # KORREKTUR: Doppelte Zeile entfernt
             abfahrt_km = current_km.get(fahrzeug_id, 0) if fahrzeug_id is not None else 0
